@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Milktea POS</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#f4f1ec;color:#222}
+button,input,select{font:inherit;padding:10px;border-radius:8px;border:1px solid #ccc}
+button{cursor:pointer;background:#fff}button.pri{background:#8b5e3c;color:#fff;border:0}
+header{display:flex;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}
+header b{flex:1}#login{max-width:320px;margin:15vh auto;display:grid;gap:10px;padding:16px}
+.wrap{display:grid;grid-template-columns:1fr 340px;gap:12px;padding:12px}
+@media(max-width:800px){.wrap{grid-template-columns:1fr}}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}.tabs .on{background:#8b5e3c;color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.grid button{text-align:left;min-height:84px}.grid small{display:block;color:#777}
+.card{background:#fff;border-radius:10px;padding:12px}
+.line{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0}
+.row{display:flex;justify-content:space-between;padding:3px 0}.big{font-size:1.3em;font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:12px 0}
+table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid #eee;text-align:left}
+</style></head><body>
+<div id="login" hidden>
+  <h2>Milktea POS</h2>
+  <input id="email" type="email" placeholder="Email">
+  <input id="pass" type="password" placeholder="Password">
+  <button class="pri" id="loginBtn">Log in</button><div id="loginErr" style="color:#b00"></div>
+</div>
+<div id="app" hidden>
+  <header><b>Milktea POS</b><button id="tSell">Sell</button><button id="tRep">Report</button><button id="logout">Log out</button></header>
+  <div id="sell" class="wrap">
+    <div><div class="tabs" id="tabs"></div><div class="grid" id="grid"></div></div>
+    <div class="card">
+      <h3 style="margin-top:0">Current order</h3><div id="lines"></div><hr>
+      <div class="row"><span>Subtotal</span><span id="sub"></span></div>
+      <div class="row"><span>Discount (₱)</span><input id="disc" type="number" min="0" style="width:100px"></div>
+      <div class="row big"><span>Total</span><span id="tot"></span></div>
+      <div class="row"><span>Payment</span><select id="pay"><option value="cash">Cash</option><option value="gcash">GCash</option></select></div>
+      <div class="row"><span>Cash received</span><input id="cash" type="number" min="0" style="width:100px"></div>
+      <div class="row"><span>Change</span><b id="chg">₱0.00</b></div>
+      <button class="pri" id="charge" style="width:100%;margin-top:8px">Charge</button>
+      <button id="clear" style="width:100%;margin-top:6px">Clear order</button>
+    </div>
+  </div>
+  <div id="report" class="card" style="margin:12px" hidden>
+    <div class="tabs"><input id="from" type="date"><input id="to" type="date"><button class="pri" id="go">Show</button>
+      <button id="rToday">Today</button><button id="rMonth">This month</button><button id="rYear">This year</button></div>
+    <div class="stats" id="stats"></div>
+    <h3>Top items</h3><div id="top"></div>
+    <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// PASTE YOUR SUPABASE DETAILS HERE (Project Settings > API)
+const SUPABASE_URL = 'https://tixkedgvdzritdqnwpsw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_HTjl8cMVMroXfriN9T65gg_kepy8Lb_';
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+const P = n => '₱' + Number(n || 0).toFixed(2);
+const day = d => d.toLocaleDateString('en-CA');
+let items = [], cat = 'All', cart = {};
+
+(async () => {
+  const { data: { session } } = await db.auth.getSession();
+  session ? start() : ($('login').hidden = false);
+})();
+$('loginBtn').onclick = async () => {
+  const { error } = await db.auth.signInWithPassword({ email: $('email').value, password: $('pass').value });
+  error ? $('loginErr').textContent = error.message : start();
+};
+$('logout').onclick = async () => { await db.auth.signOut(); location.reload(); };
+$('tSell').onclick = () => { $('sell').hidden = false; $('report').hidden = true; };
+$('tRep').onclick = () => { $('sell').hidden = true; $('report').hidden = false; loadReport(); };
+
+async function start() {
+  $('login').hidden = true; $('app').hidden = false;
+  const { data, error } = await db.from('items').select('*').eq('active', true).order('id');
+  if (error) return alert(error.message);
+  items = data; setRange(new Date(), new Date()); renderTabs(); renderGrid(); renderCart();
+}
+function renderTabs() {
+  const cats = ['All', ...new Set(items.map(i => i.category))];
+  $('tabs').innerHTML = '';
+  cats.forEach(c => { const b = document.createElement('button'); b.textContent = c; if (c === cat) b.className = 'on';
+    b.onclick = () => { cat = c; renderTabs(); renderGrid(); }; $('tabs').appendChild(b); });
+}
+function renderGrid() {
+  $('grid').innerHTML = '';
+  items.filter(i => cat === 'All' || i.category === cat).forEach(i => {
+    const b = document.createElement('button');
+    b.innerHTML = `${i.name}<small>${i.size || ''}</small><b>${P(i.price)}</b>`;
+    b.onclick = () => { cart[i.id] = (cart[i.id] || 0) + 1; renderCart(); }; $('grid').appendChild(b);
+  });
+}
+function totals() {
+  const sub = Object.entries(cart).reduce((s, [id, q]) => s + items.find(i => i.id == id).price * q, 0);
+  const disc = Math.min(+$('disc').value || 0, sub);
+  return { sub, disc, total: sub - disc };
+}
+function renderCart() {
+  $('lines').innerHTML = '';
+  Object.entries(cart).forEach(([id, q]) => {
+    const i = items.find(x => x.id == id), d = document.createElement('div'); d.className = 'line';
+    d.innerHTML = `<span style="flex:1">${i.name} ${i.size || ''}</span><button>-</button><b>${q}</b><button>+</button><span>${P(i.price * q)}</span>`;
+    const [m, p] = d.querySelectorAll('button');
+    m.onclick = () => { if (--cart[id] <= 0) delete cart[id]; renderCart(); };
+    p.onclick = () => { cart[id]++; renderCart(); }; $('lines').appendChild(d);
+  });
+  const t = totals(); $('sub').textContent = P(t.sub); $('tot').textContent = P(t.total);
+  $('chg').textContent = P(Math.max(0, (+$('cash').value || 0) - t.total));
+}
+['disc', 'cash'].forEach(id => $(id).oninput = renderCart);
+$('clear').onclick = () => { cart = {}; $('disc').value = ''; $('cash').value = ''; renderCart(); };
+$('charge').onclick = async () => {
+  const t = totals(), cash = +$('cash').value || 0, pay = $('pay').value;
+  if (!Object.keys(cart).length) return;
+  if (pay === 'cash' && cash < t.total) return alert('Cash received is less than the total.');
+  const { data: sale, error } = await db.from('sales').insert({ subtotal: t.sub, discount: t.disc, total: t.total,
+    payment_type: pay, cash_received: pay === 'cash' ? cash : null, change_given: pay === 'cash' ? cash - t.total : null }).select().single();
+  if (error) return alert(error.message);
+  const rows = Object.entries(cart).map(([id, q]) => { const i = items.find(x => x.id == id);
+    return { sale_id: sale.id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: i.price, unit_cogs: i.cogs }; });
+  const { error: e2 } = await db.from('sale_items').insert(rows);
+  if (e2) { await db.from('sales').update({ voided: true }).eq('id', sale.id); return alert('Sale failed and was voided: ' + e2.message); }
+  alert('Sale saved. Change: ' + P(pay === 'cash' ? cash - t.total : 0)); $('clear').onclick();
+};
+
+function setRange(a, b) { $('from').value = day(a); $('to').value = day(b); }
+$('rToday').onclick = () => { setRange(new Date(), new Date()); loadReport(); };
+$('rMonth').onclick = () => { const n = new Date(); setRange(new Date(n.getFullYear(), n.getMonth(), 1), n); loadReport(); };
+$('rYear').onclick = () => { const n = new Date(); setRange(new Date(n.getFullYear(), 0, 1), n); loadReport(); };
+$('go').onclick = loadReport;
+async function loadReport() {
+  const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
+  let rows = [], p = 0;
+  while (true) {
+    const { data, error } = await db.from('sales').select('*, sale_items(*)').gte('created_at', from.toISOString())
+      .lt('created_at', to.toISOString()).order('created_at', { ascending: false }).range(p * 1000, p * 1000 + 999);
+    if (error) return alert(error.message);
+    rows = rows.concat(data); if (data.length < 1000) break; p++;
+  }
+  const ok = rows.filter(s => !s.voided), rev = ok.reduce((s, x) => s + +x.total, 0), top = {};
+  let cost = 0;
+  ok.forEach(s => s.sale_items.forEach(l => { cost += l.qty * (+l.unit_cogs || 0);
+    const k = l.item_name + ' ' + (l.size || ''); top[k] = (top[k] || 0) + l.qty; }));
+  const box = (a, b) => `<div class="card"><small>${a}</small><div class="big">${b}</div></div>`;
+  $('stats').innerHTML = box('Sales', P(rev)) + box('Orders', ok.length) + box('Cost (known items)', P(cost)) + box('Est. profit', P(rev - cost));
+  $('top').innerHTML = '<table>' + Object.entries(top).sort((a, b) => b[1] - a[1]).map(([k, q]) => `<tr><td>${k}</td><td>${q}</td></tr>`).join('') + '</table>';
+  $('list').innerHTML = '<table>' + rows.map(s => `<tr style="${s.voided ? 'opacity:.4' : ''}"><td>${new Date(s.created_at).toLocaleString()}</td>
+    <td>${P(s.total)}</td><td>${s.payment_type}</td><td>${s.voided ? 'voided' : `<button data-id="${s.id}">Void</button>`}</td></tr>`).join('') + '</table>';
+  $('list').querySelectorAll('button').forEach(b => b.onclick = async () => {
+    if (!confirm('Void this sale?')) return;
+    await db.from('sales').update({ voided: true }).eq('id', b.dataset.id); loadReport(); });
+}
+</script></body></html>
