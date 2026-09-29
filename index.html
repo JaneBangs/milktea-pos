@@ -27,7 +27,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
   <button class="pri" id="loginBtn">Log in</button><div id="loginErr" style="color:#b00"></div>
 </div>
 <div id="app" hidden>
-  <header><b>Milktea POS</b><button id="tSell">Sell</button><button id="tRep">Report</button><button id="logout">Log out</button></header>
+  <header><b>Milktea POS</b><button id="tSell">Sell</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="logout">Log out</button></header>
   <div id="sell" class="wrap">
     <div><div class="tabs" id="tabs"></div><div class="grid" id="grid"></div></div>
     <div class="card">
@@ -48,6 +48,23 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <div class="stats" id="stats"></div>
     <h3>Top items</h3><div id="top"></div>
     <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
+  </div>
+  <div id="items" class="card" style="margin:12px" hidden>
+    <div class="tabs"><button class="pri" id="addItem">+ Add item</button>
+      <label style="align-self:center"><input type="checkbox" id="showHidden"> Show hidden items</label></div>
+    <div id="itemList" style="overflow-x:auto"></div>
+    <div id="editor" class="card" style="border:1px solid #ddd;margin-top:12px" hidden>
+      <h3 id="edTitle" style="margin-top:0"></h3>
+      <div style="display:grid;gap:8px;max-width:360px">
+        <input id="fName" placeholder="Item name">
+        <input id="fSize" placeholder="Size / variant, e.g. 16oz (optional)">
+        <input id="fCat" list="cats" placeholder="Category"><datalist id="cats"></datalist>
+        <input id="fPrice" type="number" min="0" step="0.01" placeholder="Selling price">
+        <input id="fCogs" type="number" min="0" step="0.01" placeholder="Cost per cup (optional)">
+        <label><input type="checkbox" id="fActive" checked> Show on sales screen</label>
+        <div class="tabs"><button class="pri" id="fSave">Save</button><button id="fCancel">Cancel</button></div>
+      </div>
+    </div>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -71,15 +88,54 @@ $('loginBtn').onclick = async () => {
   error ? $('loginErr').textContent = error.message : start();
 };
 $('logout').onclick = async () => { await db.auth.signOut(); location.reload(); };
-$('tSell').onclick = () => { $('sell').hidden = false; $('report').hidden = true; };
-$('tRep').onclick = () => { $('sell').hidden = true; $('report').hidden = false; loadReport(); };
+const show = v => ['sell', 'report', 'items'].forEach(x => $(x).hidden = x !== v);
+$('tSell').onclick = () => show('sell');
+$('tRep').onclick = () => { show('report'); loadReport(); };
+$('tItems').onclick = () => { show('items'); renderItems(); };
 
 async function start() {
   $('login').hidden = true; $('app').hidden = false;
-  const { data, error } = await db.from('items').select('*').eq('active', true).order('id');
-  if (error) return alert(error.message);
-  items = data; setRange(new Date(), new Date()); renderTabs(); renderGrid(); renderCart();
+  await loadItems(); setRange(new Date(), new Date());
 }
+let allItems = [], editId = null;
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+async function loadItems() {
+  const { data, error } = await db.from('items').select('*').order('id');
+  if (error) return alert(error.message);
+  allItems = data; items = data.filter(i => i.active);
+  if (cat !== 'All' && !items.some(i => i.category === cat)) cat = 'All';
+  Object.keys(cart).forEach(id => { if (!items.find(i => i.id == id)) delete cart[id]; });
+  renderTabs(); renderGrid(); renderCart();
+}
+function renderItems() {
+  $('cats').innerHTML = [...new Set(allItems.map(i => i.category))].map(c => `<option value="${esc(c)}">`).join('');
+  const rows = allItems.filter(i => i.active || $('showHidden').checked)
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name) || a.id - b.id);
+  $('itemList').innerHTML = '<table><tr><th>Item</th><th>Size</th><th>Category</th><th>Price</th><th>Cost</th><th></th></tr>' +
+    rows.map(i => `<tr style="${i.active ? '' : 'opacity:.5'}"><td>${esc(i.name)}</td><td>${esc(i.size)}</td><td>${esc(i.category)}</td>
+    <td>${P(i.price)}</td><td>${i.cogs == null ? '—' : P(i.cogs)}</td>
+    <td style="white-space:nowrap"><button data-e="${i.id}">Edit</button> <button data-s="${i.id}">+ Size</button></td></tr>`).join('') + '</table>';
+  $('itemList').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openEditor(allItems.find(i => i.id == b.dataset.e)));
+  $('itemList').querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
+    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category }); });
+}
+function openEditor(i) {
+  editId = i.id || null; $('edTitle').textContent = editId ? 'Edit item' : 'New item';
+  $('fName').value = i.name || ''; $('fSize').value = i.size || ''; $('fCat').value = i.category || '';
+  $('fPrice').value = i.price ?? ''; $('fCogs').value = i.cogs ?? ''; $('fActive').checked = i.active !== false;
+  $('editor').hidden = false; $('fName').focus();
+}
+$('addItem').onclick = () => openEditor({});
+$('fCancel').onclick = () => $('editor').hidden = true;
+$('showHidden').onchange = renderItems;
+$('fSave').onclick = async () => {
+  const row = { name: $('fName').value.trim(), size: $('fSize').value.trim() || null, category: $('fCat').value.trim(),
+    price: parseFloat($('fPrice').value), cogs: $('fCogs').value === '' ? null : parseFloat($('fCogs').value), active: $('fActive').checked };
+  if (!row.name || !row.category || isNaN(row.price)) return alert('Please fill in the name, category, and price.');
+  const { error } = editId ? await db.from('items').update(row).eq('id', editId) : await db.from('items').insert(row);
+  if (error) return alert(error.message);
+  $('editor').hidden = true; await loadItems(); renderItems();
+};
 function renderTabs() {
   const cats = ['All', ...new Set(items.map(i => i.category))];
   $('tabs').innerHTML = '';
