@@ -191,7 +191,7 @@ async function renderInv() {
       ings.map(i => { const s = stockMap[i.id] || 0, low = i.low_stock > 0 && s <= i.low_stock;
         return `<tr style="${low ? 'background:#fde8e8' : ''}"><td>${esc(i.name)}<br><small>${i.category}</small></td><td>${+s.toFixed(2)} ${i.unit}</td><td>${i.low_stock || '—'}</td>
         <td>${i.pack_size} ${i.unit} @ ${P(i.pack_price)}</td><td>${esc((sups.find(x => x.id == i.supplier_id) || {}).name || '')}</td>
-        <td style="white-space:nowrap"><button data-ie="${i.id}">Edit</button> <button data-ic="${i.id}">Count</button></td></tr>`; }).join('') + '</table></div>';
+        <td style="white-space:nowrap"><button data-ie="${i.id}">Edit</button> <button data-ic="${i.id}">Count</button> <button data-ix="${i.id}">Delete</button></td></tr>`; }).join('') + '</table></div>';
     if ($('addIng')) $('addIng').onclick = () => { edit = { id: null, v: { category: 'Ingredient', unit: 'g' } }; renderInv(); };
     b.querySelectorAll('[data-ie]').forEach(x => x.onclick = () => { edit = { id: x.dataset.ie, v: ings.find(i => i.id == x.dataset.ie) }; renderInv(); });
     b.querySelectorAll('[data-ic]').forEach(x => x.onclick = async () => {
@@ -199,11 +199,22 @@ async function renderInv() {
       if (v === null || v.trim() === '' || isNaN(v)) return; const d = num(v) - cur; if (!d) return;
       const r = await db.from('stock_moves').insert({ ingredient_id: i.id, delta: d, reason: 'stock check', note: 'Counted ' + num(v) + ' ' + i.unit });
       if (r.error) return alert(r.error.message); loadInv(); });
+    b.querySelectorAll('[data-ix]').forEach(x => x.onclick = async () => {
+      const i = ings.find(y => y.id == x.dataset.ix);
+      if (!confirm(`Delete ${i.name}? If it already has stock history, it will be hidden instead so your records stay correct.`)) return;
+      let r = await db.from('ingredients').delete().eq('id', i.id);
+      if (r.error) { r = await db.from('ingredients').update({ active: false }).eq('id', i.id); if (r.error) return alert(r.error.message);
+        alert(i.name + ' has history, so it was hidden instead of deleted.'); }
+      loadInv(); });
     wireEdit('ingredients', ingF());
   } else if (invTab === 'sup') {
-    b.innerHTML = (edit ? editBox('supplier', supF) : '<button class="pri" id="addSup">+ Add supplier</button>') + '<table>' + sups.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.contact)} ${esc(s.phone)}</td><td>${esc(s.city)}</td><td><button data-se="${s.id}">Edit</button></td></tr>`).join('') + '</table>';
+    b.innerHTML = (edit ? editBox('supplier', supF) : '<button class="pri" id="addSup">+ Add supplier</button>') + '<table>' + sups.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.contact)} ${esc(s.phone)}</td><td>${esc(s.city)}</td><td style="white-space:nowrap"><button data-se="${s.id}">Edit</button> <button data-sx="${s.id}">Delete</button></td></tr>`).join('') + '</table>';
     if ($('addSup')) $('addSup').onclick = () => { edit = { id: null, v: {} }; renderInv(); };
     b.querySelectorAll('[data-se]').forEach(x => x.onclick = () => { edit = { id: x.dataset.se, v: sups.find(s => s.id == x.dataset.se) }; renderInv(); });
+    b.querySelectorAll('[data-sx]').forEach(x => x.onclick = async () => {
+      const s = sups.find(y => y.id == x.dataset.sx); if (!confirm(`Delete supplier ${s.name}?`)) return;
+      const r = await db.from('suppliers').delete().eq('id', s.id);
+      if (r.error) return alert(s.name + " is used by an ingredient or a past purchase, so it can't be deleted."); loadInv(); });
     wireEdit('suppliers', supF);
   } else if (invTab === 'hist') {
     const r = await db.from('stock_moves').select('*, ingredients(name, unit)').order('created_at', { ascending: false }).limit(200);
