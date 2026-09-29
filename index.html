@@ -7,7 +7,7 @@
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;font-family:system-ui,sans-serif;background:#f4f1ec;color:#222}
 button,input,select{font:inherit;padding:10px;border-radius:8px;border:1px solid #ccc}
 button{cursor:pointer;background:#fff}button.pri{background:#8b5e3c;color:#fff;border:0}
-header{display:flex;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}
 header b{flex:1}#login{max-width:320px;margin:15vh auto;display:grid;gap:10px;padding:16px}
 .wrap{display:grid;grid-template-columns:1fr 340px;gap:12px;padding:12px}
 @media(max-width:800px){.wrap{grid-template-columns:1fr}}
@@ -27,18 +27,21 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
   <button class="pri" id="loginBtn">Log in</button><div id="loginErr" style="color:#b00"></div>
 </div>
 <div id="app" hidden>
-  <header><b>Milktea POS</b><button id="tSell">Sell</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="logout">Log out</button></header>
+  <header><b>Milktea POS</b><button id="tSell">Sell</button><button id="tOrders">Orders</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="tInv">Inventory</button><button id="logout">Log out</button></header>
   <div id="sell" class="wrap">
     <div><div class="tabs" id="tabs"></div><div class="grid" id="grid"></div></div>
     <div class="card">
-      <h3 style="margin-top:0">Current order</h3><div id="lines"></div><hr>
+      <h3 style="margin-top:0" id="tkTitle">Current order</h3>
+      <select id="dine" style="width:100%"><option>Dine in</option><option>Takeout</option><option>Delivery</option></select>
+      <input id="cname" placeholder="Customer / table name (optional)" style="width:100%;margin-top:6px">
+      <div id="lines"></div><hr>
       <div class="row"><span>Subtotal</span><span id="sub"></span></div>
       <div class="row"><span>Discount (₱)</span><input id="disc" type="number" min="0" style="width:100px"></div>
       <div class="row big"><span>Total</span><span id="tot"></span></div>
       <div class="row"><span>Payment</span><select id="pay"><option value="cash">Cash</option><option value="gcash">GCash</option></select></div>
       <div class="row"><span>Cash received</span><input id="cash" type="number" min="0" style="width:100px"></div>
       <div class="row"><span>Change</span><b id="chg">₱0.00</b></div>
-      <button class="pri" id="charge" style="width:100%;margin-top:8px">Charge</button>
+      <button id="saveOrd" style="width:100%;margin-top:8px">Save order (unpaid)</button><button class="pri" id="charge" style="width:100%;margin-top:6px">Charge</button>
       <button id="clear" style="width:100%;margin-top:6px">Clear order</button>
     </div>
   </div>
@@ -46,8 +49,17 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <div class="tabs"><input id="from" type="date"><input id="to" type="date"><button class="pri" id="go">Show</button>
       <button id="rToday">Today</button><button id="rMonth">This month</button><button id="rYear">This year</button></div>
     <div class="stats" id="stats"></div>
-    <h3>Top items</h3><div id="top"></div>
+    <h3>Sales by hour</h3><div id="hours"></div><h3>Top items</h3><div id="top"></div>
     <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
+  </div>
+  <div id="orders" class="card" style="margin:12px" hidden>
+    <h3 style="margin-top:0">Open (unpaid) orders</h3><div id="openList" style="overflow-x:auto"></div>
+    <h3>Recent receipts</h3><div id="recList" style="overflow-x:auto"></div>
+  </div>
+  <div id="inv" class="card" style="margin:12px" hidden>
+    <div id="lowBanner"></div>
+    <div class="tabs"><button data-t="stock">Stock</button><button data-t="buy">Buy stock</button><button data-t="sup">Suppliers</button><button data-t="hist">History</button></div>
+    <div id="invBody"></div>
   </div>
   <div id="items" class="card" style="margin:12px" hidden>
     <div class="tabs"><button class="pri" id="addItem">+ Add item</button>
@@ -77,7 +89,7 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
 const P = n => '₱' + Number(n || 0).toFixed(2);
 const day = d => d.toLocaleDateString('en-CA');
-let items = [], cat = 'All', cart = {};
+let items = [], cat = 'All', cart = {}, cur = null, openOrders = [];
 
 (async () => {
   const { data: { session } } = await db.auth.getSession();
@@ -88,14 +100,16 @@ $('loginBtn').onclick = async () => {
   error ? $('loginErr').textContent = error.message : start();
 };
 $('logout').onclick = async () => { await db.auth.signOut(); location.reload(); };
-const show = v => ['sell', 'report', 'items'].forEach(x => $(x).hidden = x !== v);
+const show = v => ['sell', 'report', 'items', 'orders', 'inv'].forEach(x => $(x).hidden = x !== v);
 $('tSell').onclick = () => show('sell');
+$('tInv').onclick = () => { show('inv'); loadInv(); };
 $('tRep').onclick = () => { show('report'); loadReport(); };
 $('tItems').onclick = () => { show('items'); renderItems(); };
+$('tOrders').onclick = () => { show('orders'); loadOrders(); };
 
 async function start() {
   $('login').hidden = true; $('app').hidden = false;
-  await loadItems(); setRange(new Date(), new Date());
+  await loadItems(); setRange(new Date(), new Date()); loadInv();
 }
 let allItems = [], editId = null;
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -136,6 +150,98 @@ $('fSave').onclick = async () => {
   if (error) return alert(error.message);
   $('editor').hidden = true; await loadItems(); renderItems();
 };
+let ings = [], sups = [], stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
+const num = v => parseFloat(v) || 0;
+const ingF = () => [{ k: 'name', l: 'Ingredient name' }, { k: 'category', opts: [['Ingredient', 'Ingredient'], ['Packaging', 'Packaging']] },
+  { k: 'unit', opts: [['g', 'Grams (g)'], ['ml', 'Milliliters (ml)'], ['pcs', 'Pieces (pcs)']] },
+  { k: 'pack_size', l: 'Amount in one pack (g / ml / pcs)', t: 'number' }, { k: 'pack_price', l: 'Price per pack (₱)', t: 'number' },
+  { k: 'supplier_id', opts: [['', 'No supplier'], ...sups.map(s => [s.id, s.name])] }, { k: 'low_stock', l: 'Warn when stock is at or below (g / ml / pcs)', t: 'number' }];
+const supF = [['name', 'Supplier name'], ['contact', 'Contact'], ['email', 'Email'], ['phone', 'Phone'], ['website', 'Website'], ['address1', 'Address 1'],
+  ['address2', 'Address 2'], ['city', 'City'], ['region', 'Region'], ['postal_code', 'Postal code'], ['country', 'Country'], ['note', 'Note']].map(([k, l]) => ({ k, l }));
+const formHTML = (fs, v) => fs.map(f => f.opts ? `<select id="f_${f.k}">${f.opts.map(o => `<option value="${esc(o[0])}"${String(v[f.k] ?? '') === String(o[0]) ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`
+  : `<input id="f_${f.k}" placeholder="${f.l}" ${f.t ? 'type="number" step="any" min="0"' : ''} value="${esc(v[f.k] ?? '')}">`).join('');
+const readForm = fs => { const o = {}; fs.forEach(f => { const x = $('f_' + f.k).value.trim(); o[f.k] = f.t ? num(x) : (x === '' ? null : x); }); return o; };
+const editBox = (title, fs) => `<div class="card" style="border:1px solid #ddd;margin:8px 0"><h3 style="margin-top:0">${edit.id ? 'Edit' : 'New'} ${title}</h3>
+  <div style="display:grid;gap:8px;max-width:380px">${formHTML(fs, edit.v)}<div class="tabs"><button class="pri" id="eSave">Save</button><button id="eCancel">Cancel</button></div></div></div>`;
+function wireEdit(table, fs) {
+  if (!$('eSave')) return;
+  $('eCancel').onclick = () => { edit = null; renderInv(); };
+  $('eSave').onclick = async () => {
+    const o = readForm(fs); if (!o.name) return alert('Please enter a name.');
+    if (table === 'ingredients' && !(o.pack_size > 0)) return alert('Amount in one pack must be more than 0.');
+    const r = edit.id ? await db.from(table).update(o).eq('id', edit.id) : await db.from(table).insert(o);
+    if (r.error) return alert(r.error.message); edit = null; loadInv();
+  };
+}
+async function loadInv() {
+  const [a, b, c] = await Promise.all([db.from('ingredients').select('*').eq('active', true).order('category').order('name'),
+    db.from('suppliers').select('*').order('name'), db.from('ingredient_stock').select('*')]);
+  const err = a.error || b.error || c.error; if (err) return console.warn(err.message);
+  ings = a.data; sups = b.data; stockMap = {}; c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
+  const low = ings.filter(i => i.low_stock > 0 && (stockMap[i.id] || 0) <= i.low_stock);
+  $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory';
+  $('lowBanner').innerHTML = low.length ? `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>Time to restock:</b> ${low.map(i => esc(i.name) + ' (' + +(stockMap[i.id] || 0).toFixed(2) + ' ' + i.unit + ' left)').join(', ')}</div>` : '';
+  if (!$('inv').hidden) renderInv();
+}
+$('inv').querySelectorAll('[data-t]').forEach(b => b.onclick = () => { invTab = b.dataset.t; edit = null; renderInv(); });
+async function renderInv() {
+  const b = $('invBody');
+  if (invTab === 'stock') {
+    b.innerHTML = (edit ? editBox('ingredient', ingF()) : '<button class="pri" id="addIng">+ Add ingredient</button>') + '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Warn at</th><th>Pack</th><th>Supplier</th><th></th></tr>' +
+      ings.map(i => { const s = stockMap[i.id] || 0, low = i.low_stock > 0 && s <= i.low_stock;
+        return `<tr style="${low ? 'background:#fde8e8' : ''}"><td>${esc(i.name)}<br><small>${i.category}</small></td><td>${+s.toFixed(2)} ${i.unit}</td><td>${i.low_stock || '—'}</td>
+        <td>${i.pack_size} ${i.unit} @ ${P(i.pack_price)}</td><td>${esc((sups.find(x => x.id == i.supplier_id) || {}).name || '')}</td>
+        <td style="white-space:nowrap"><button data-ie="${i.id}">Edit</button> <button data-ic="${i.id}">Count</button></td></tr>`; }).join('') + '</table></div>';
+    if ($('addIng')) $('addIng').onclick = () => { edit = { id: null, v: { category: 'Ingredient', unit: 'g' } }; renderInv(); };
+    b.querySelectorAll('[data-ie]').forEach(x => x.onclick = () => { edit = { id: x.dataset.ie, v: ings.find(i => i.id == x.dataset.ie) }; renderInv(); });
+    b.querySelectorAll('[data-ic]').forEach(x => x.onclick = async () => {
+      const i = ings.find(y => y.id == x.dataset.ic), cur = stockMap[i.id] || 0, v = prompt(`How much ${i.name} is left right now (in ${i.unit})?`, +cur.toFixed(2));
+      if (v === null || v.trim() === '' || isNaN(v)) return; const d = num(v) - cur; if (!d) return;
+      const r = await db.from('stock_moves').insert({ ingredient_id: i.id, delta: d, reason: 'stock check', note: 'Counted ' + num(v) + ' ' + i.unit });
+      if (r.error) return alert(r.error.message); loadInv(); });
+    wireEdit('ingredients', ingF());
+  } else if (invTab === 'sup') {
+    b.innerHTML = (edit ? editBox('supplier', supF) : '<button class="pri" id="addSup">+ Add supplier</button>') + '<table>' + sups.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.contact)} ${esc(s.phone)}</td><td>${esc(s.city)}</td><td><button data-se="${s.id}">Edit</button></td></tr>`).join('') + '</table>';
+    if ($('addSup')) $('addSup').onclick = () => { edit = { id: null, v: {} }; renderInv(); };
+    b.querySelectorAll('[data-se]').forEach(x => x.onclick = () => { edit = { id: x.dataset.se, v: sups.find(s => s.id == x.dataset.se) }; renderInv(); });
+    wireEdit('suppliers', supF);
+  } else if (invTab === 'hist') {
+    const r = await db.from('stock_moves').select('*, ingredients(name, unit)').order('created_at', { ascending: false }).limit(200);
+    if (r.error) return alert(r.error.message);
+    b.innerHTML = '<div style="overflow-x:auto"><table><tr><th>Date</th><th>Ingredient</th><th>Reason</th><th>Change</th></tr>' + r.data.map(m => `<tr><td>${new Date(m.created_at).toLocaleString()}</td><td>${esc(m.ingredients.name)}</td>
+      <td>${esc(m.reason)}<br><small>${esc(m.note)}</small></td><td>${m.delta > 0 ? '+' : ''}${+(+m.delta).toFixed(2)} ${m.ingredients.unit}</td></tr>`).join('') + '</table></div>';
+  } else buyView();
+}
+function buyView() {
+  if (!ings.length) return $('invBody').innerHTML = 'Add your ingredients in the Stock tab first.';
+  $('invBody').innerHTML = `<div style="display:grid;gap:8px;max-width:560px"><select id="b_sup"><option value="">Select a supplier</option>${sups.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+    <input id="b_date" type="date" value="${day(new Date())}"><input id="b_notes" placeholder="Notes">
+    <div class="tabs"><select id="b_ing">${ings.map(i => `<option value="${i.id}">${esc(i.name)} (${+(stockMap[i.id] || 0).toFixed(1)} ${i.unit} in stock)</option>`).join('')}</select>
+    <input id="b_packs" type="number" min="0" step="any" placeholder="Packs" style="width:90px"><input id="b_price" type="number" min="0" step="any" placeholder="₱ per pack" style="width:110px"><button id="b_add">Add</button></div>
+    <div id="b_lines"></div><input id="b_extra" type="number" min="0" step="any" placeholder="Additional costs, e.g. delivery (₱)"><div class="row big"><span>Total</span><span id="b_total"></span></div>
+    <button class="pri" id="b_go">Receive stock</button></div>`;
+  const fillPrice = () => $('b_price').value = ings.find(i => i.id == $('b_ing').value).pack_price || '';
+  const lines = () => { const sub = buyLines.reduce((t, l) => t + l.packs * l.price, 0);
+    $('b_lines').innerHTML = '<table>' + buyLines.map((l, n) => { const i = ings.find(x => x.id == l.id);
+      return `<tr><td>${esc(i.name)}</td><td>${l.packs} pack × ${P(l.price)}<br><small>= ${+(l.packs * i.pack_size).toFixed(2)} ${i.unit}</small></td><td>${P(l.packs * l.price)}</td><td><button data-rm="${n}">✕</button></td></tr>`; }).join('') + '</table>';
+    $('b_total').textContent = P(sub + num($('b_extra').value));
+    $('b_lines').querySelectorAll('[data-rm]').forEach(x => x.onclick = () => { buyLines.splice(x.dataset.rm, 1); lines(); }); };
+  $('b_ing').onchange = fillPrice; $('b_extra').oninput = lines; fillPrice(); lines();
+  $('b_add').onclick = () => { const packs = num($('b_packs').value); if (!packs) return alert('Enter how many packs.');
+    buyLines.push({ id: $('b_ing').value, packs, price: num($('b_price').value) }); $('b_packs').value = ''; lines(); };
+  $('b_go').onclick = async () => {
+    if (!buyLines.length) return alert('Add at least one item.'); const sid = $('b_sup').value; if (!sid) return alert('Select a supplier.');
+    const extra = num($('b_extra').value), total = buyLines.reduce((t, l) => t + l.packs * l.price, 0) + extra;
+    let r = await db.from('purchases').insert({ supplier_id: sid, purchase_date: $('b_date').value, notes: $('b_notes').value.trim() || null, extra_costs: extra, total }).select().single();
+    if (r.error) return alert(r.error.message); const pid = r.data.id;
+    r = await db.from('purchase_lines').insert(buyLines.map(l => ({ purchase_id: pid, ingredient_id: l.id, packs: l.packs, pack_price: l.price })));
+    if (r.error) return alert(r.error.message);
+    r = await db.from('stock_moves').insert(buyLines.map(l => ({ ingredient_id: l.id, delta: l.packs * ings.find(i => i.id == l.id).pack_size, reason: 'received', note: 'Purchase #' + pid })));
+    if (r.error) return alert(r.error.message);
+    for (const l of buyLines) await db.from('ingredients').update({ pack_price: l.price, supplier_id: sid }).eq('id', l.id);
+    buyLines = []; alert('Stock received.'); invTab = 'stock'; loadInv();
+  };
+}
 function renderTabs() {
   const cats = ['All', ...new Set(items.map(i => i.category))];
   $('tabs').innerHTML = '';
@@ -146,6 +252,7 @@ function renderGrid() {
   $('grid').innerHTML = '';
   items.filter(i => cat === 'All' || i.category === cat).forEach(i => {
     const b = document.createElement('button');
+    b.style.background = `hsl(${[...i.category].reduce((h, c) => h + c.charCodeAt(0), 0) * 37 % 360} 45% 90%)`;
     b.innerHTML = `${i.name}<small>${i.size || ''}</small><b>${P(i.price)}</b>`;
     b.onclick = () => { cart[i.id] = (cart[i.id] || 0) + 1; renderCart(); }; $('grid').appendChild(b);
   });
@@ -168,20 +275,64 @@ function renderCart() {
   $('chg').textContent = P(Math.max(0, (+$('cash').value || 0) - t.total));
 }
 ['disc', 'cash'].forEach(id => $(id).oninput = renderCart);
-$('clear').onclick = () => { cart = {}; $('disc').value = ''; $('cash').value = ''; renderCart(); };
-$('charge').onclick = async () => {
-  const t = totals(), cash = +$('cash').value || 0, pay = $('pay').value;
-  if (!Object.keys(cart).length) return;
-  if (pay === 'cash' && cash < t.total) return alert('Cash received is less than the total.');
-  const { data: sale, error } = await db.from('sales').insert({ subtotal: t.sub, discount: t.disc, total: t.total,
-    payment_type: pay, cash_received: pay === 'cash' ? cash : null, change_given: pay === 'cash' ? cash - t.total : null }).select().single();
-  if (error) return alert(error.message);
-  const rows = Object.entries(cart).map(([id, q]) => { const i = items.find(x => x.id == id);
-    return { sale_id: sale.id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: i.price, unit_cogs: i.cogs }; });
-  const { error: e2 } = await db.from('sale_items').insert(rows);
-  if (e2) { await db.from('sales').update({ voided: true }).eq('id', sale.id); return alert('Sale failed and was voided: ' + e2.message); }
-  alert('Sale saved. Change: ' + P(pay === 'cash' ? cash - t.total : 0)); $('clear').onclick();
-};
+$('clear').onclick = () => { cart = {}; cur = null; $('disc').value = ''; $('cash').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
+const fail = e => { alert(e.message); return null; };
+async function persist(status) {
+  if (!Object.keys(cart).length) { alert('The order is empty.'); return null; }
+  const t = totals(), cash = +$('cash').value || 0, pay = $('pay').value, paid = status === 'paid', cashPay = paid && pay === 'cash';
+  if (cashPay && cash < t.total) { alert('Cash received is less than the total.'); return null; }
+  const base = { subtotal: t.sub, discount: t.disc, total: t.total, status, dining_option: $('dine').value,
+    customer_name: $('cname').value.trim() || null, payment_type: paid ? pay : null,
+    cash_received: cashPay ? cash : null, change_given: cashPay ? cash - t.total : null, paid_at: paid ? new Date().toISOString() : null };
+  const lines = id => Object.entries(cart).map(([iid, q]) => { const i = items.find(x => x.id == iid);
+    return { sale_id: id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: i.price, unit_cogs: i.cogs }; });
+  let id = cur, r;
+  if (id) {
+    r = await db.from('sale_items').delete().eq('sale_id', id); if (r.error) return fail(r.error);
+    r = await db.from('sale_items').insert(lines(id)); if (r.error) return fail(r.error);
+    r = await db.from('sales').update(base).eq('id', id); if (r.error) return fail(r.error);
+  } else {
+    r = await db.from('sales').insert(base).select().single(); if (r.error) return fail(r.error);
+    id = r.data.id;
+    r = await db.from('sale_items').insert(lines(id));
+    if (r.error) { await db.from('sales').update({ voided: true }).eq('id', id); return fail(r.error); }
+  }
+  return { id, t, cash, pay };
+}
+$('saveOrd').onclick = async () => { const r = await persist('open'); if (r) { alert('Order saved as unpaid.'); $('clear').onclick(); } };
+$('charge').onclick = async () => { const r = await persist('paid');
+  if (r) { alert('Paid. Change: ' + P(r.pay === 'cash' ? r.cash - r.t.total : 0)); $('clear').onclick(); } };
+
+const ago = t => { const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + m % 60 + ' min'; };
+const tm = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const lineText = s => s.sale_items.map(l => `${l.qty}× ${esc(l.item_name)} ${esc(l.size)}`).join(', ');
+async function loadOrders() {
+  let r = await db.from('sales').select('*, sale_items(*)').eq('status', 'open').eq('voided', false).order('created_at');
+  if (r.error) return alert(r.error.message);
+  openOrders = r.data;
+  $('openList').innerHTML = openOrders.length ? '<table>' + openOrders.map(s => `<tr><td>${esc(s.customer_name || 'Order #' + s.id)}</td>
+    <td>${esc(s.dining_option)}</td><td>${lineText(s)}</td><td>${P(s.total)}</td><td>Ordered ${tm(s.created_at)}<br><small>waiting ${ago(s.created_at)}</small></td>
+    <td style="white-space:nowrap"><button class="pri" data-o="${s.id}">Open / Pay</button> <button data-x="${s.id}">Cancel</button></td></tr>`).join('') + '</table>' : 'No unpaid orders.';
+  $('openList').querySelectorAll('[data-o]').forEach(b => b.onclick = () => openOrder(openOrders.find(s => s.id == b.dataset.o)));
+  $('openList').querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
+    if (!confirm('Cancel this unpaid order?')) return;
+    await db.from('sales').update({ voided: true }).eq('id', b.dataset.x); loadOrders(); });
+  r = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').order('paid_at', { ascending: false }).limit(100);
+  if (r.error) return alert(r.error.message);
+  $('recList').innerHTML = '<table>' + r.data.map(s => `<tr style="${s.voided ? 'opacity:.4' : ''}"><td>#${s.id}</td>
+    <td>${new Date(s.paid_at).toLocaleDateString()}<br><small>ordered ${tm(s.created_at)} · paid ${tm(s.paid_at)}</small></td>
+    <td>${esc(s.customer_name || '')} ${esc(s.dining_option)}</td><td>${lineText(s)}</td><td>${P(s.total)} ${esc(s.payment_type)}</td>
+    <td>${s.voided ? 'refunded' : `<button data-r="${s.id}">Refund</button>`}</td></tr>`).join('') + '</table>';
+  $('recList').querySelectorAll('[data-r]').forEach(b => b.onclick = async () => {
+    if (!confirm('Refund this receipt?')) return;
+    await db.from('sales').update({ voided: true }).eq('id', b.dataset.r); loadOrders(); });
+}
+function openOrder(s) {
+  cart = {};
+  s.sale_items.forEach(l => { if (items.find(i => i.id == l.item_id)) cart[l.item_id] = l.qty; else alert(l.item_name + ' is no longer on the menu, so it was left out.'); });
+  cur = s.id; $('dine').value = s.dining_option; $('cname').value = s.customer_name || ''; $('disc').value = s.discount || '';
+  $('tkTitle').textContent = 'Order #' + s.id + ' (unpaid)'; show('sell'); renderCart();
+}
 
 function setRange(a, b) { $('from').value = day(a); $('to').value = day(b); }
 $('rToday').onclick = () => { setRange(new Date(), new Date()); loadReport(); };
@@ -192,8 +343,8 @@ async function loadReport() {
   const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
   let rows = [], p = 0;
   while (true) {
-    const { data, error } = await db.from('sales').select('*, sale_items(*)').gte('created_at', from.toISOString())
-      .lt('created_at', to.toISOString()).order('created_at', { ascending: false }).range(p * 1000, p * 1000 + 999);
+    const { data, error } = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').gte('paid_at', from.toISOString())
+      .lt('paid_at', to.toISOString()).order('paid_at', { ascending: false }).range(p * 1000, p * 1000 + 999);
     if (error) return alert(error.message);
     rows = rows.concat(data); if (data.length < 1000) break; p++;
   }
@@ -204,7 +355,10 @@ async function loadReport() {
   const box = (a, b) => `<div class="card"><small>${a}</small><div class="big">${b}</div></div>`;
   $('stats').innerHTML = box('Sales', P(rev)) + box('Orders', ok.length) + box('Cost (known items)', P(cost)) + box('Est. profit', P(rev - cost));
   $('top').innerHTML = '<table>' + Object.entries(top).sort((a, b) => b[1] - a[1]).map(([k, q]) => `<tr><td>${k}</td><td>${q}</td></tr>`).join('') + '</table>';
-  $('list').innerHTML = '<table>' + rows.map(s => `<tr style="${s.voided ? 'opacity:.4' : ''}"><td>${new Date(s.created_at).toLocaleString()}</td>
+  const hrs = Array(24).fill(0); ok.forEach(s => hrs[new Date(s.paid_at).getHours()] += +s.total);
+  const mx = Math.max(...hrs, 1);
+  $('hours').innerHTML = hrs.map((v, h) => v ? `<div style="display:flex;gap:6px;align-items:center;margin:2px 0"><span style="width:64px">${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}</span><div style="background:#8b5e3c;height:14px;width:${v / mx * 55}%"></div><span>${P(v)}</span></div>` : '').join('') || 'No sales.';
+  $('list').innerHTML = '<table>' + rows.map(s => `<tr style="${s.voided ? 'opacity:.4' : ''}"><td>${new Date(s.paid_at).toLocaleString()}</td>
     <td>${P(s.total)}</td><td>${s.payment_type}</td><td>${s.voided ? 'voided' : `<button data-id="${s.id}">Void</button>`}</td></tr>`).join('') + '</table>';
   $('list').querySelectorAll('button').forEach(b => b.onclick = async () => {
     if (!confirm('Void this sale?')) return;
