@@ -78,7 +78,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
   </div>
   <div id="inv" class="card" style="margin:12px" hidden>
     <div id="lowBanner"></div>
-    <div class="tabs"><button data-t="stock">Stock</button><button data-t="buy">Buy stock</button><button data-t="sup">Suppliers</button><button data-t="rec">Recipes</button><button data-t="hist">History</button></div>
+    <div class="tabs"><button data-t="stock">Stock</button><button data-t="buy">Buy stock</button><button data-t="po">Purchase orders</button><button data-t="val">Valuation</button><button data-t="sup">Suppliers</button><button data-t="rec">Recipes</button><button data-t="hist">History</button></div>
     <div id="invBody"></div>
   </div>
   <div id="items" class="card" style="margin:12px" hidden>
@@ -221,7 +221,7 @@ $('fSave').onclick = async () => {
   }
   $('editor').hidden = true; await loadInv(); await loadItems(); renderItems();
 };
-let ings = [], sups = [], recipes = {}, stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
+let ings = [], sups = [], recipes = {}, pos = [], incoming = {}, stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
 const num = v => parseFloat(v) || 0;
 const ingF = () => [{ k: 'name', l: 'Ingredient name' }, { k: 'category', opts: [['Ingredient', 'Ingredient'], ['Packaging', 'Packaging']] },
   { k: 'unit', opts: [['g', 'Grams (g)'], ['ml', 'Milliliters (ml)'], ['pcs', 'Pieces (pcs)']] },
@@ -246,10 +246,11 @@ function wireEdit(table, fs) {
   };
 }
 async function loadInv() {
-  const [a, b, c, d] = await Promise.all([db.from('ingredients').select('*').eq('active', true).order('category').order('name'),
-    db.from('suppliers').select('*').order('name'), db.from('ingredient_stock').select('*'), db.from('recipe_lines').select('*')]);
-  const err = a.error || b.error || c.error || d.error; if (err) return console.warn(err.message);
-  ings = a.data; sups = b.data; stockMap = {}; recipes = {}; d.data.forEach(r => (recipes[r.item_id] = recipes[r.item_id] || []).push(r)); c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
+  const [a, b, c, d, e] = await Promise.all([db.from('ingredients').select('*').eq('active', true).order('category').order('name'),
+    db.from('suppliers').select('*').order('name'), db.from('ingredient_stock').select('*'), db.from('recipe_lines').select('*'), db.from('purchases').select('*, purchase_lines(*)').eq('status', 'ordered').order('id')]);
+  const err = a.error || b.error || c.error || d.error || e.error; if (err) return console.warn(err.message);
+  ings = a.data; sups = b.data; stockMap = {}; recipes = {}; d.data.forEach(r => (recipes[r.item_id] = recipes[r.item_id] || []).push(r));
+  pos = e.data; incoming = {}; pos.forEach(p => p.purchase_lines.forEach(l => { const g = ings.find(i => i.id == l.ingredient_id); if (g) incoming[g.id] = (incoming[g.id] || 0) + l.packs * g.pack_size; })); c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
   const low = ings.filter(i => i.low_stock > 0 && (stockMap[i.id] || 0) <= i.low_stock);
   $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory'; $('menu').textContent = low.length ? '☰ ●' : '☰';
   $('lowBanner').innerHTML = low.length ? `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>Time to restock:</b> ${low.map(i => esc(i.name) + ' (' + +(stockMap[i.id] || 0).toFixed(2) + ' ' + i.unit + ' left)').join(', ')}</div>` : '';
@@ -303,9 +304,9 @@ function drawRec() {
 async function renderInv() {
   const b = $('invBody');
   if (invTab === 'stock') {
-    b.innerHTML = (edit ? editBox('ingredient', ingF()) : '<button class="pri" id="addIng">+ Add ingredient</button>') + '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Warn at</th><th>Pack</th><th>Supplier</th><th></th></tr>' +
+    b.innerHTML = (edit ? editBox('ingredient', ingF()) : '<button class="pri" id="addIng">+ Add ingredient</button>') + '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Incoming</th><th>Warn at</th><th>Pack</th><th>Supplier</th><th></th></tr>' +
       ings.map(i => { const s = stockMap[i.id] || 0, low = i.low_stock > 0 && s <= i.low_stock;
-        return `<tr style="${low ? 'background:#fde8e8' : ''}"><td>${esc(i.name)}<br><small>${i.category}</small></td><td>${+s.toFixed(2)} ${i.unit}</td><td>${i.low_stock || '—'}</td>
+        return `<tr style="${low ? 'background:#fde8e8' : ''}"><td>${esc(i.name)}<br><small>${i.category}</small></td><td>${+s.toFixed(2)} ${i.unit}</td><td>${incoming[i.id] ? '+' + +incoming[i.id].toFixed(2) + ' ' + i.unit : '—'}</td><td>${i.low_stock || '—'}</td>
         <td>${i.pack_size} ${i.unit} @ ${P(i.pack_price)}</td><td>${esc((sups.find(x => x.id == i.supplier_id) || {}).name || '')}</td>
         <td style="white-space:nowrap"><button data-ie="${i.id}">Edit</button> <button data-ic="${i.id}">Count</button> <button data-ix="${i.id}">Delete</button></td></tr>`; }).join('') + '</table></div>';
     if ($('addIng')) $('addIng').onclick = () => { edit = { id: null, v: { category: 'Ingredient', unit: 'g' } }; renderInv(); };
@@ -337,16 +338,40 @@ async function renderInv() {
     if (r.error) return alert(r.error.message);
     b.innerHTML = '<div style="overflow-x:auto"><table><tr><th>Date</th><th>Ingredient</th><th>Reason</th><th>Change</th></tr>' + r.data.map(m => `<tr><td>${new Date(m.created_at).toLocaleString()}</td><td>${esc(m.ingredients.name)}</td>
       <td>${esc(m.reason)}<br><small>${esc(m.note)}</small></td><td>${m.delta > 0 ? '+' : ''}${+(+m.delta).toFixed(2)} ${m.ingredients.unit}</td></tr>`).join('') + '</table></div>';
-  } else if (invTab === 'rec') recipeView(); else buyView();
+  } else if (invTab === 'rec') recipeView(); else if (invTab === 'po') poView(); else if (invTab === 'val') valView(); else buyView();
+}
+async function receivePO(pid, sid, lines) {
+  let r = await db.from('stock_moves').insert(lines.map(l => ({ ingredient_id: l.ingredient_id, delta: l.packs * ings.find(i => i.id == l.ingredient_id).pack_size, reason: 'received', note: 'Purchase #' + pid })));
+  if (r.error) return r.error;
+  for (const l of lines) await db.from('ingredients').update({ pack_price: l.pack_price, supplier_id: sid }).eq('id', l.ingredient_id);
+  r = await db.from('purchases').update({ status: 'received', received_at: new Date().toISOString() }).eq('id', pid); return r.error;
+}
+function poView() {
+  $('invBody').innerHTML = pos.length ? '<div style="overflow-x:auto"><table><tr><th>#</th><th>Supplier</th><th>Ordered</th><th>Expected</th><th>Items</th><th>Total</th><th></th></tr>' + pos.map(p =>
+    `<tr><td>${p.id}</td><td>${esc((sups.find(x => x.id == p.supplier_id) || {}).name || '')}</td><td>${p.purchase_date}</td><td>${p.expected_on || '—'}</td>
+    <td>${p.purchase_lines.map(l => { const g = ings.find(i => i.id == l.ingredient_id); return `${+l.packs} × ${esc(g ? g.name : '?')}`; }).join('<br>')}</td><td>${P(p.total)}</td>
+    <td style="white-space:nowrap"><button class="pri" data-pr="${p.id}">Receive</button> <button data-pc="${p.id}">Cancel</button></td></tr>`).join('') + '</table></div>' : 'No orders waiting to arrive. Use Buy stock → Save as ordered.';
+  $('invBody').querySelectorAll('[data-pr]').forEach(x => x.onclick = async () => { const p = pos.find(y => y.id == x.dataset.pr);
+    if (!confirm('Mark purchase #' + p.id + ' as received and add it to your stock?')) return;
+    const er = await receivePO(p.id, p.supplier_id, p.purchase_lines); if (er) return alert(er.message); await loadInv(); recalcCosts(); });
+  $('invBody').querySelectorAll('[data-pc]').forEach(x => x.onclick = async () => { if (!confirm('Cancel this order?')) return;
+    const r = await db.from('purchases').update({ status: 'cancelled' }).eq('id', x.dataset.pc); if (r.error) return alert(r.error.message); loadInv(); });
+}
+function valView() {
+  let total = 0; const cats = {};
+  ings.forEach(i => { const st = Math.max(0, stockMap[i.id] || 0), u = i.pack_size ? i.pack_price / i.pack_size : 0; (cats[i.category] = cats[i.category] || []).push({ i, st, u, v: st * u }); total += st * u; });
+  $('invBody').innerHTML = '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Cost per unit</th><th>Value</th></tr>' + Object.entries(cats).map(([c, rs]) =>
+    `<tr><td colspan="3"><b>${esc(c)}</b></td><td><b>${P(rs.reduce((t, r) => t + r.v, 0))}</b></td></tr>` + rs.map(r => `<tr><td>${esc(r.i.name)}</td><td>${+r.st.toFixed(2)} ${r.i.unit}</td><td>₱${r.u.toFixed(4)}</td><td>${P(r.v)}</td></tr>`).join('')).join('')
+    + `</table></div><div class="row big"><span>Total stock value</span><span>${P(total)}</span></div><small>Stock is valued at each ingredient's current price.</small>`;
 }
 function buyView() {
   if (!ings.length) return $('invBody').innerHTML = 'Add your ingredients in the Stock tab first.';
   $('invBody').innerHTML = `<div style="display:grid;gap:8px;max-width:560px"><select id="b_sup"><option value="">Select a supplier</option>${sups.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
-    <input id="b_date" type="date" value="${day(new Date())}"><input id="b_notes" placeholder="Notes">
+    <input id="b_date" type="date" value="${day(new Date())}"><input id="b_notes" placeholder="Notes"><label>Expected on (optional) <input id="b_exp" type="date"></label>
     <div class="tabs"><select id="b_ing">${ings.map(i => `<option value="${i.id}">${esc(i.name)} (${+(stockMap[i.id] || 0).toFixed(1)} ${i.unit} in stock)</option>`).join('')}</select>
-    <input id="b_packs" type="number" min="0" step="any" placeholder="Packs" style="width:90px"><input id="b_price" type="number" min="0" step="any" placeholder="₱ per pack" style="width:110px"><button id="b_add">Add</button></div>
+    <input id="b_packs" type="number" min="0" step="any" placeholder="Packs" style="width:90px"><input id="b_price" type="number" min="0" step="any" placeholder="₱ per pack" style="width:110px"><button id="b_add">Add</button><button id="b_auto">Autofill low stock</button></div>
     <div id="b_lines"></div><input id="b_extra" type="number" min="0" step="any" placeholder="Additional costs, e.g. delivery (₱)"><div class="row big"><span>Total</span><span id="b_total"></span></div>
-    <button class="pri" id="b_go">Receive stock</button></div>`;
+    <div class="tabs"><button id="b_ord">Save as ordered</button><button class="pri" id="b_go">Receive now</button></div></div>`;
   const fillPrice = () => $('b_price').value = ings.find(i => i.id == $('b_ing').value).pack_price || '';
   const lines = () => { const sub = buyLines.reduce((t, l) => t + l.packs * l.price, 0);
     $('b_lines').innerHTML = '<table>' + buyLines.map((l, n) => { const i = ings.find(x => x.id == l.id);
@@ -356,18 +381,21 @@ function buyView() {
   $('b_ing').onchange = fillPrice; $('b_extra').oninput = lines; fillPrice(); lines();
   $('b_add').onclick = () => { const packs = num($('b_packs').value); if (!packs) return alert('Enter how many packs.');
     buyLines.push({ id: $('b_ing').value, packs, price: num($('b_price').value) }); $('b_packs').value = ''; lines(); };
-  $('b_go').onclick = async () => {
+  const save = async status => {
     if (!buyLines.length) return alert('Add at least one item.'); const sid = $('b_sup').value; if (!sid) return alert('Select a supplier.');
     const extra = num($('b_extra').value), total = buyLines.reduce((t, l) => t + l.packs * l.price, 0) + extra;
-    let r = await db.from('purchases').insert({ supplier_id: sid, purchase_date: $('b_date').value, notes: $('b_notes').value.trim() || null, extra_costs: extra, total }).select().single();
-    if (r.error) return alert(r.error.message); const pid = r.data.id;
-    r = await db.from('purchase_lines').insert(buyLines.map(l => ({ purchase_id: pid, ingredient_id: l.id, packs: l.packs, pack_price: l.price })));
-    if (r.error) return alert(r.error.message);
-    r = await db.from('stock_moves').insert(buyLines.map(l => ({ ingredient_id: l.id, delta: l.packs * ings.find(i => i.id == l.id).pack_size, reason: 'received', note: 'Purchase #' + pid })));
-    if (r.error) return alert(r.error.message);
-    for (const l of buyLines) await db.from('ingredients').update({ pack_price: l.price, supplier_id: sid }).eq('id', l.id);
-    buyLines = []; alert('Stock received.'); invTab = 'stock'; await loadInv(); recalcCosts();
+    let r = await db.from('purchases').insert({ supplier_id: sid, purchase_date: $('b_date').value, notes: $('b_notes').value.trim() || null, extra_costs: extra, total, status, expected_on: $('b_exp').value || null }).select().single();
+    if (r.error) return alert(r.error.message); const pid = r.data.id, ls = buyLines.map(l => ({ ingredient_id: l.id, packs: l.packs, pack_price: l.price }));
+    r = await db.from('purchase_lines').insert(ls.map(l => ({ purchase_id: pid, ...l }))); if (r.error) return alert(r.error.message);
+    if (status === 'received') { const er = await receivePO(pid, sid, ls); if (er) return alert(er.message); }
+    buyLines = []; alert(status === 'received' ? 'Stock received.' : 'Order saved. It shows as Incoming until you receive it.');
+    invTab = status === 'received' ? 'stock' : 'po'; await loadInv(); if (status === 'received') recalcCosts();
   };
+  $('b_go').onclick = () => save('received'); $('b_ord').onclick = () => save('ordered');
+  $('b_auto').onclick = () => { let n = 0;
+    ings.forEach(i => { const have = (stockMap[i.id] || 0) + (incoming[i.id] || 0);
+      if (i.low_stock > 0 && have <= i.low_stock && !buyLines.some(l => l.id == i.id)) { buyLines.push({ id: String(i.id), packs: Math.max(1, Math.ceil((i.low_stock * 2 - have) / i.pack_size)), price: +i.pack_price }); n++; } });
+    if (!n) alert('Nothing is low right now.'); lines(); };
 }
 function renderTabs() {
   const cats = ['All', ...new Set(items.map(i => i.category))];
