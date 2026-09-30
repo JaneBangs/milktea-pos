@@ -58,7 +58,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
   </div>
   <div id="inv" class="card" style="margin:12px" hidden>
     <div id="lowBanner"></div>
-    <div class="tabs"><button data-t="stock">Stock</button><button data-t="buy">Buy stock</button><button data-t="sup">Suppliers</button><button data-t="hist">History</button></div>
+    <div class="tabs"><button data-t="stock">Stock</button><button data-t="buy">Buy stock</button><button data-t="sup">Suppliers</button><button data-t="rec">Recipes</button><button data-t="hist">History</button></div>
     <div id="invBody"></div>
   </div>
   <div id="items" class="card" style="margin:12px" hidden>
@@ -150,12 +150,13 @@ $('fSave').onclick = async () => {
   if (error) return alert(error.message);
   $('editor').hidden = true; await loadItems(); renderItems();
 };
-let ings = [], sups = [], stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
+let ings = [], sups = [], recipes = {}, stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
 const num = v => parseFloat(v) || 0;
 const ingF = () => [{ k: 'name', l: 'Ingredient name' }, { k: 'category', opts: [['Ingredient', 'Ingredient'], ['Packaging', 'Packaging']] },
   { k: 'unit', opts: [['g', 'Grams (g)'], ['ml', 'Milliliters (ml)'], ['pcs', 'Pieces (pcs)']] },
   { k: 'pack_size', l: 'Amount in one pack (g / ml / pcs)', t: 'number' }, { k: 'pack_price', l: 'Price per pack (₱)', t: 'number' },
-  { k: 'supplier_id', opts: [['', 'No supplier'], ...sups.map(s => [s.id, s.name])] }, { k: 'low_stock', l: 'Warn when stock is at or below (g / ml / pcs)', t: 'number' }];
+  { k: 'supplier_id', opts: [['', 'No supplier'], ...sups.map(s => [s.id, s.name])] }, { k: 'low_stock', l: 'Warn when stock is at or below (g / ml / pcs)', t: 'number' },
+  { k: 'brew_g_per_l', l: 'Tea only: grams of leaves per 1000 ml brewed (e.g. 20)', t: 'number' }];
 const supF = [['name', 'Supplier name'], ['contact', 'Contact'], ['email', 'Email'], ['phone', 'Phone'], ['website', 'Website'], ['address1', 'Address 1'],
   ['address2', 'Address 2'], ['city', 'City'], ['region', 'Region'], ['postal_code', 'Postal code'], ['country', 'Country'], ['note', 'Note']].map(([k, l]) => ({ k, l }));
 const formHTML = (fs, v) => fs.map(f => f.opts ? `<select id="f_${f.k}">${f.opts.map(o => `<option value="${esc(o[0])}"${String(v[f.k] ?? '') === String(o[0]) ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`
@@ -170,20 +171,64 @@ function wireEdit(table, fs) {
     const o = readForm(fs); if (!o.name) return alert('Please enter a name.');
     if (table === 'ingredients' && !(o.pack_size > 0)) return alert('Amount in one pack must be more than 0.');
     const r = edit.id ? await db.from(table).update(o).eq('id', edit.id) : await db.from(table).insert(o);
-    if (r.error) return alert(r.error.message); edit = null; loadInv();
+    if (r.error) return alert(r.error.message); edit = null; await loadInv(); if (table === 'ingredients') recalcCosts();
   };
 }
 async function loadInv() {
-  const [a, b, c] = await Promise.all([db.from('ingredients').select('*').eq('active', true).order('category').order('name'),
-    db.from('suppliers').select('*').order('name'), db.from('ingredient_stock').select('*')]);
-  const err = a.error || b.error || c.error; if (err) return console.warn(err.message);
-  ings = a.data; sups = b.data; stockMap = {}; c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
+  const [a, b, c, d] = await Promise.all([db.from('ingredients').select('*').eq('active', true).order('category').order('name'),
+    db.from('suppliers').select('*').order('name'), db.from('ingredient_stock').select('*'), db.from('recipe_lines').select('*')]);
+  const err = a.error || b.error || c.error || d.error; if (err) return console.warn(err.message);
+  ings = a.data; sups = b.data; stockMap = {}; recipes = {}; d.data.forEach(r => (recipes[r.item_id] = recipes[r.item_id] || []).push(r)); c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
   const low = ings.filter(i => i.low_stock > 0 && (stockMap[i.id] || 0) <= i.low_stock);
   $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory';
   $('lowBanner').innerHTML = low.length ? `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>Time to restock:</b> ${low.map(i => esc(i.name) + ' (' + +(stockMap[i.id] || 0).toFixed(2) + ' ' + i.unit + ' left)').join(', ')}</div>` : '';
   if (!$('inv').hidden) renderInv();
 }
 $('inv').querySelectorAll('[data-t]').forEach(b => b.onclick = () => { invTab = b.dataset.t; edit = null; renderInv(); });
+const use = (g, q) => g.brew_g_per_l > 0 ? q * g.brew_g_per_l / 1000 : q;
+const cupCost = rl => rl.reduce((t, r) => { const g = ings.find(i => i.id == r.ingredient_id); return g ? t + use(g, r.qty) * g.pack_price / g.pack_size : t; }, 0);
+const usage = ls => { const a = {}; ls.forEach(l => (recipes[l.item_id] || []).forEach(r => { const g = ings.find(i => i.id == r.ingredient_id); if (g) a[g.id] = (a[g.id] || 0) + use(g, r.qty) * l.qty; })); return a; };
+async function adjustStock(oid, oldL, newL, reason) {
+  const a = usage(newL), o = usage(oldL), m = [];
+  new Set([...Object.keys(a), ...Object.keys(o)]).forEach(id => { const d = (o[id] || 0) - (a[id] || 0);
+    if (Math.abs(d) > 1e-9) m.push({ ingredient_id: id, delta: d, reason, note: 'Order #' + oid }); });
+  if (m.length) await db.from('stock_moves').insert(m);
+}
+async function recalcCosts() {
+  for (const it of allItems) { const rl = recipes[it.id]; if (!rl || !rl.length) continue;
+    const c = Math.round(cupCost(rl) * 100) / 100;
+    if (it.cogs == null || Math.abs(+it.cogs - c) > 0.004) await db.from('items').update({ cogs: c }).eq('id', it.id); }
+  await loadItems();
+}
+let recItem = null, recLines = [];
+function recipeView() {
+  const b = $('invBody');
+  if (!ings.length) return b.innerHTML = 'Add your ingredients in the Stock tab first.';
+  if (!recItem || !allItems.find(i => i.id == recItem)) recItem = allItems[0].id;
+  b.innerHTML = `<select id="r_item">${allItems.map(i => `<option value="${i.id}"${i.id == recItem ? ' selected' : ''}>${esc(i.name)} ${esc(i.size)}${i.active ? '' : ' (hidden)'}</option>`).join('')}</select><div id="r_body" style="margin-top:8px"></div>`;
+  $('r_item').onchange = () => { recItem = $('r_item').value; loadRec(); };
+  loadRec();
+}
+function loadRec() { recLines = (recipes[recItem] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawRec(); }
+function drawRec() {
+  const it = allItems.find(i => i.id == recItem), rb = $('r_body');
+  rb.innerHTML = '<table>' + recLines.map((r, n) => { const g = ings.find(i => i.id == r.ingredient_id);
+    return `<tr><td><select data-ri="${n}">${ings.map(i => `<option value="${i.id}"${i.id == r.ingredient_id ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}</select></td>
+    <td><input data-rq="${n}" type="number" min="0" step="any" value="${r.qty}" style="width:90px"> ${g ? (g.brew_g_per_l > 0 ? 'ml of brewed tea' : g.unit) : ''}</td><td><button data-rx="${n}">✕</button></td></tr>`; }).join('') + `</table>
+    <button id="r_add">+ Add ingredient</button><div class="row big"><span>Cost per cup</span><span id="r_cost"></span></div>
+    <div class="row"><span>Selling price</span><span>${P(it.price)}</span></div><button class="pri" id="r_save">Save recipe</button>`;
+  const showCost = () => $('r_cost').textContent = P(cupCost(recLines)); showCost();
+  rb.querySelectorAll('[data-ri]').forEach(x => x.onchange = () => { recLines[x.dataset.ri].ingredient_id = x.value; drawRec(); });
+  rb.querySelectorAll('[data-rq]').forEach(x => x.oninput = () => { recLines[x.dataset.rq].qty = num(x.value); showCost(); });
+  rb.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => { recLines.splice(x.dataset.rx, 1); drawRec(); });
+  $('r_add').onclick = () => { recLines.push({ ingredient_id: ings[0].id, qty: 0 }); drawRec(); };
+  $('r_save').onclick = async () => {
+    let r = await db.from('recipe_lines').delete().eq('item_id', recItem); if (r.error) return alert(r.error.message);
+    const rows = recLines.filter(l => l.qty > 0).map(l => ({ item_id: recItem, ingredient_id: l.ingredient_id, qty: l.qty }));
+    if (rows.length) { r = await db.from('recipe_lines').insert(rows); if (r.error) return alert(r.error.message); }
+    await loadInv(); await recalcCosts(); alert('Recipe saved. Cost per cup: ' + P(cupCost(recipes[recItem] || [])));
+  };
+}
 async function renderInv() {
   const b = $('invBody');
   if (invTab === 'stock') {
@@ -221,7 +266,7 @@ async function renderInv() {
     if (r.error) return alert(r.error.message);
     b.innerHTML = '<div style="overflow-x:auto"><table><tr><th>Date</th><th>Ingredient</th><th>Reason</th><th>Change</th></tr>' + r.data.map(m => `<tr><td>${new Date(m.created_at).toLocaleString()}</td><td>${esc(m.ingredients.name)}</td>
       <td>${esc(m.reason)}<br><small>${esc(m.note)}</small></td><td>${m.delta > 0 ? '+' : ''}${+(+m.delta).toFixed(2)} ${m.ingredients.unit}</td></tr>`).join('') + '</table></div>';
-  } else buyView();
+  } else if (invTab === 'rec') recipeView(); else buyView();
 }
 function buyView() {
   if (!ings.length) return $('invBody').innerHTML = 'Add your ingredients in the Stock tab first.';
@@ -250,7 +295,7 @@ function buyView() {
     r = await db.from('stock_moves').insert(buyLines.map(l => ({ ingredient_id: l.id, delta: l.packs * ings.find(i => i.id == l.id).pack_size, reason: 'received', note: 'Purchase #' + pid })));
     if (r.error) return alert(r.error.message);
     for (const l of buyLines) await db.from('ingredients').update({ pack_price: l.price, supplier_id: sid }).eq('id', l.id);
-    buyLines = []; alert('Stock received.'); invTab = 'stock'; loadInv();
+    buyLines = []; alert('Stock received.'); invTab = 'stock'; await loadInv(); recalcCosts();
   };
 }
 function renderTabs() {
@@ -299,15 +344,19 @@ async function persist(status) {
     return { sale_id: id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: i.price, unit_cogs: i.cogs }; });
   let id = cur, r;
   if (id) {
+    const old = (openOrders.find(s => s.id == id) || {}).sale_items || [];
     r = await db.from('sale_items').delete().eq('sale_id', id); if (r.error) return fail(r.error);
     r = await db.from('sale_items').insert(lines(id)); if (r.error) return fail(r.error);
     r = await db.from('sales').update(base).eq('id', id); if (r.error) return fail(r.error);
+    await adjustStock(id, old, lines(id), 'order edited');
   } else {
     r = await db.from('sales').insert(base).select().single(); if (r.error) return fail(r.error);
     id = r.data.id;
     r = await db.from('sale_items').insert(lines(id));
     if (r.error) { await db.from('sales').update({ voided: true }).eq('id', id); return fail(r.error); }
   }
+  if (!cur) await adjustStock(id, [], lines(id), 'sold');
+  loadInv();
   return { id, t, cash, pay };
 }
 $('saveOrd').onclick = async () => { const r = await persist('open'); if (r) { alert('Order saved as unpaid.'); $('clear').onclick(); } };
@@ -327,7 +376,8 @@ async function loadOrders() {
   $('openList').querySelectorAll('[data-o]').forEach(b => b.onclick = () => openOrder(openOrders.find(s => s.id == b.dataset.o)));
   $('openList').querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
     if (!confirm('Cancel this unpaid order?')) return;
-    await db.from('sales').update({ voided: true }).eq('id', b.dataset.x); loadOrders(); });
+    const o = openOrders.find(s => s.id == b.dataset.x); await adjustStock(o.id, o.sale_items, [], 'order cancelled');
+    await db.from('sales').update({ voided: true }).eq('id', b.dataset.x); loadInv(); loadOrders(); });
   r = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').order('paid_at', { ascending: false }).limit(100);
   if (r.error) return alert(r.error.message);
   $('recList').innerHTML = '<table>' + r.data.map(s => `<tr style="${s.voided ? 'opacity:.4' : ''}"><td>#${s.id}</td>
