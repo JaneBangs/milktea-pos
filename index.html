@@ -46,9 +46,15 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     </div>
   </div>
   <div id="report" class="card" style="margin:12px" hidden>
-    <div class="tabs"><input id="from" type="date"><input id="to" type="date"><button class="pri" id="go">Show</button>
-      <button id="rToday">Today</button><button id="rMonth">This month</button><button id="rYear">This year</button></div>
-    <div class="stats" id="stats"></div>
+    <div class="tabs"><button id="rPrev">‹</button><input id="from" type="date"><input id="to" type="date"><button id="rNext">›</button>
+      <select id="tod"><option value="0-24">All day</option><option value="6-12">Morning (6 AM–12 PM)</option><option value="12-18">Afternoon (12–6 PM)</option><option value="18-24">Evening (6 PM–12 AM)</option></select>
+      <button class="pri" id="go">Show</button></div>
+    <div class="tabs"><button id="rToday">Today</button><button id="r7">Last 7 days</button><button id="rMonth">This month</button><button id="rYear">This year</button></div>
+    <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div>
+    <div class="tabs" style="align-items:center"><b id="chTitle" style="flex:1"></b><select id="grp"><option value="d">Days</option><option value="w">Weeks</option><option value="m">Months</option></select></div>
+    <div id="chart"></div>
+    <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button></div>
+    <div id="brk" style="overflow-x:auto;max-height:320px"></div>
     <h3>Sales by hour</h3><div id="hours"></div><h3>Top items</h3><div id="top"></div>
     <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
   </div>
@@ -395,34 +401,76 @@ function openOrder(s) {
   $('tkTitle').textContent = 'Order #' + s.id + ' (unpaid)'; show('sell'); renderCart();
 }
 
+let met = 'net', last = null;
+const MET = { gross: 'Gross sales', refunds: 'Refunds', disc: 'Discounts', net: 'Net sales', profit: 'Gross profit' };
 function setRange(a, b) { $('from').value = day(a); $('to').value = day(b); }
-$('rToday').onclick = () => { setRange(new Date(), new Date()); loadReport(); };
-$('rMonth').onclick = () => { const n = new Date(); setRange(new Date(n.getFullYear(), n.getMonth(), 1), n); loadReport(); };
-$('rYear').onclick = () => { const n = new Date(); setRange(new Date(n.getFullYear(), 0, 1), n); loadReport(); };
-$('go').onclick = loadReport;
-async function loadReport() {
-  const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
+const quick = (fn) => () => { const n = new Date(); setRange(...fn(n)); loadReport(); };
+$('rToday').onclick = quick(n => [n, n]);
+$('r7').onclick = quick(n => [new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6), n]);
+$('rMonth').onclick = quick(n => [new Date(n.getFullYear(), n.getMonth(), 1), n]);
+$('rYear').onclick = quick(n => [new Date(n.getFullYear(), 0, 1), n]);
+$('go').onclick = loadReport; $('tod').onchange = loadReport; $('grp').onchange = () => last && drawReport();
+const shift = dir => { const a = new Date($('from').value + 'T00:00:00'), b = new Date($('to').value + 'T00:00:00'), n = Math.round((b - a) / 864e5) + 1;
+  a.setDate(a.getDate() + dir * n); b.setDate(b.getDate() + dir * n); setRange(a, b); loadReport(); };
+$('rPrev').onclick = () => shift(-1); $('rNext').onclick = () => shift(1);
+async function fetchSales(from, to) {
   let rows = [], p = 0;
   while (true) {
     const { data, error } = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').gte('paid_at', from.toISOString())
       .lt('paid_at', to.toISOString()).order('paid_at', { ascending: false }).range(p * 1000, p * 1000 + 999);
-    if (error) return alert(error.message);
+    if (error) { alert(error.message); return null; }
     rows = rows.concat(data); if (data.length < 1000) break; p++;
   }
-  const ok = rows.filter(s => !s.voided), rev = ok.reduce((s, x) => s + +x.total, 0), top = {};
-  let cost = 0;
-  ok.forEach(s => s.sale_items.forEach(l => { cost += l.qty * (+l.unit_cogs || 0);
-    const k = l.item_name + ' ' + (l.size || ''); top[k] = (top[k] || 0) + l.qty; }));
-  const box = (a, b) => `<div class="card"><small>${a}</small><div class="big">${b}</div></div>`;
-  $('stats').innerHTML = box('Sales', P(rev)) + box('Orders', ok.length) + box('Cost (known items)', P(cost)) + box('Est. profit', P(rev - cost));
-  $('top').innerHTML = '<table>' + Object.entries(top).sort((a, b) => b[1] - a[1]).map(([k, q]) => `<tr><td>${k}</td><td>${q}</td></tr>`).join('') + '</table>';
-  const hrs = Array(24).fill(0); ok.forEach(s => hrs[new Date(s.paid_at).getHours()] += +s.total);
-  const mx = Math.max(...hrs, 1);
+  const [h1, h2] = $('tod').value.split('-').map(Number);
+  return rows.filter(s => { const h = new Date(s.paid_at).getHours(); return h >= h1 && h < h2; });
+}
+const calc = rows => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 0, orders: 0 };
+  rows.forEach(s => { o.gross += +s.subtotal; if (s.voided) { o.refunds += +s.subtotal; return; }
+    o.disc += +s.discount; o.net += +s.total; o.orders++; s.sale_items.forEach(l => o.cost += l.qty * (+l.unit_cogs || 0)); });
+  o.profit = o.net - o.cost; return o; };
+async function loadReport() {
+  const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
+  const pf = new Date(+from - (to - from)), [rows, prev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from)]);
+  if (!rows || !prev) return;
+  last = { rows, from, to, cur: calc(rows), prev: calc(prev), days: Math.round((to - from) / 864e5) }; drawReport();
+}
+const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
+const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+  : (g === 'w' ? 'Wk ' : '') + new Date(k + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+function chart(pts) {
+  const W = 800, H = 250, L = 70, R = 12, T = 10, B = 34, n = pts.length, hi = Math.max(...pts.map(p => p.v), 1), lo = Math.min(0, ...pts.map(p => p.v));
+  const x = i => L + (n > 1 ? i * (W - L - R) / (n - 1) : (W - L - R) / 2), y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo)), step = Math.ceil(n / 10);
+  const grid = [0, 1, 2, 3].map(i => { const v = lo + (hi - lo) * i / 3; return `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#eee"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#777">${P(v).replace('.00', '')}</text>`; }).join('');
+  const line = pts.map((p, i) => `${x(i)},${y(p.v)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${grid}<polygon points="${x(0)},${y(0)} ${line} ${x(n - 1)},${y(0)}" fill="#8b5e3c22"/><polyline points="${line}" fill="none" stroke="#8b5e3c" stroke-width="2"/>`
+    + pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="3" fill="#fff" stroke="#8b5e3c"><title>${p.label}: ${P(p.v)}</title></circle>${i % step ? '' : `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="#777">${p.label}</text>`}`).join('') + '</svg>';
+}
+function drawReport() {
+  const { rows, from, to, cur, prev, days } = last, g = $('grp').value, ok = rows.filter(s => !s.voided);
+  $('stats').innerHTML = Object.keys(MET).map(k => { const d = cur[k] - prev[k], pct = prev[k] ? d / Math.abs(prev[k]) * 100 : null,
+    col = k === 'refunds' || k === 'disc' ? '#777' : d >= 0 ? '#2a8a2a' : '#c33';
+    return `<div class="card" data-m="${k}" style="cursor:pointer;${k === met ? 'border-bottom:3px solid #8b5e3c' : ''}"><small>${MET[k]}</small><div class="big">${P(cur[k])}</div>
+      <small style="color:${col}">${d >= 0 ? '+' : '-'}${P(Math.abs(d))}${pct === null ? '' : ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`}</small></div>`; }).join('');
+  $('stats').querySelectorAll('[data-m]').forEach(x => x.onclick = () => { met = x.dataset.m; drawReport(); });
+  $('cmp').textContent = `${cur.orders} orders · compared with the previous ${days} day${days > 1 ? 's' : ''} · profit counts only items with a cost`;
+  const groups = new Map(); rows.forEach(s => { const k = bkey(new Date(s.paid_at), g); (groups.get(k) || groups.set(k, []).get(k)).push(s); });
+  const keys = new Map(), d = new Date(from); while (d < to) { keys.set(bkey(d, g)); d.setDate(d.getDate() + 1); }
+  const tbl = [...keys.keys()].map(k => ({ k, label: blab(k, g), c: calc(groups.get(k) || []) }));
+  $('chTitle').textContent = MET[met]; $('chart').innerHTML = chart(tbl.map(r => ({ label: r.label, v: r.c[met] })));
+  const f = v => v.toFixed(2); last.tbl = tbl;
+  $('brk').innerHTML = '<table><tr><th>Date</th><th>Gross sales</th><th>Refunds</th><th>Discounts</th><th>Net sales</th><th>Gross profit</th></tr>' + [...tbl].reverse().map(r =>
+    `<tr><td>${r.label}</td><td>${P(r.c.gross)}</td><td>${P(r.c.refunds)}</td><td>${P(r.c.disc)}</td><td>${P(r.c.net)}</td><td>${P(r.c.profit)}</td></tr>`).join('') + '</table>';
+  const top = {}; ok.forEach(s => s.sale_items.forEach(l => { const k = l.item_name + ' ' + (l.size || ''); top[k] = (top[k] || 0) + l.qty; }));
+  $('top').innerHTML = '<table>' + Object.entries(top).sort((a, b) => b[1] - a[1]).map(([k, q]) => `<tr><td>${esc(k)}</td><td>${q}</td></tr>`).join('') + '</table>';
+  const hrs = Array(24).fill(0); ok.forEach(s => hrs[new Date(s.paid_at).getHours()] += +s.total); const mx = Math.max(...hrs, 1);
   $('hours').innerHTML = hrs.map((v, h) => v ? `<div style="display:flex;gap:6px;align-items:center;margin:2px 0"><span style="width:64px">${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}</span><div style="background:#8b5e3c;height:14px;width:${v / mx * 55}%"></div><span>${P(v)}</span></div>` : '').join('') || 'No sales.';
   $('list').innerHTML = '<table>' + rows.map(s => `<tr style="${s.voided ? 'opacity:.4' : ''}"><td>${new Date(s.paid_at).toLocaleString()}</td>
-    <td>${P(s.total)}</td><td>${s.payment_type}</td><td>${s.voided ? 'voided' : `<button data-id="${s.id}">Void</button>`}</td></tr>`).join('') + '</table>';
+    <td>${P(s.total)}</td><td>${esc(s.payment_type)}</td><td>${s.voided ? 'voided' : `<button data-id="${s.id}">Void</button>`}</td></tr>`).join('') + '</table>';
   $('list').querySelectorAll('button').forEach(b => b.onclick = async () => {
     if (!confirm('Void this sale?')) return;
     await db.from('sales').update({ voided: true }).eq('id', b.dataset.id); loadReport(); });
 }
+$('csv').onclick = () => { if (!last) return;
+  const csv = ['Date,Gross sales,Refunds,Discounts,Net sales,Gross profit', ...last.tbl.map(r => [r.k, r.c.gross, r.c.refunds, r.c.disc, r.c.net, r.c.profit].map(v => typeof v === 'number' ? v.toFixed(2) : v).join(','))].join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `sales-${$('from').value}-to-${$('to').value}.csv`; a.click(); };
 </script></body></html>
