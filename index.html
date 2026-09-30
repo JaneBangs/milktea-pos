@@ -19,6 +19,16 @@ header b{flex:1}#login{max-width:320px;margin:15vh auto;display:grid;gap:10px;pa
 .row{display:flex;justify-content:space-between;padding:3px 0}.big{font-size:1.3em;font-weight:700}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:12px 0}
 table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid #eee;text-align:left}
+#drawer{position:fixed;top:0;bottom:0;left:0;width:230px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:4px;transform:translateX(-105%);transition:transform .2s;z-index:30;box-shadow:2px 0 12px #0003}
+#drawer.open{transform:none}#drawer button{text-align:left;border:0;background:none;padding:14px 10px}#drawer button:hover{background:#f4f1ec}
+#scrim{position:fixed;inset:0;background:#0006;z-index:20}
+.grid .tile{position:relative;padding:0;overflow:hidden;min-height:120px;background-size:cover;background-position:center}
+.tile .cap{position:absolute;left:0;right:0;bottom:0;background:#000a;color:#fff;padding:6px 8px;font-size:.9em}.tile .cap small{color:#ddd}
+.tile.nophoto .cap{background:none;color:#222;position:static;padding:10px}.tile.nophoto .cap small{color:#555}
+.pages{display:flex;gap:2px;overflow-x:auto;position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;margin-top:10px}
+.pages button{border:0;border-radius:0;background:none;padding:14px 16px;white-space:nowrap}.pages .on{background:none;color:#8b5e3c;border-bottom:3px solid #8b5e3c}
+#picker{position:fixed;inset:0;background:#0007;z-index:40;display:flex;align-items:center;justify-content:center}
+#picker>div{background:#fff;border-radius:12px;padding:16px;min-width:260px;display:grid;gap:8px}
 </style></head><body>
 <div id="login" hidden>
   <h2>Milktea POS</h2>
@@ -27,9 +37,11 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
   <button class="pri" id="loginBtn">Log in</button><div id="loginErr" style="color:#b00"></div>
 </div>
 <div id="app" hidden>
-  <header><b>Milktea POS</b><button id="tSell">Sell</button><button id="tOrders">Orders</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="tInv">Inventory</button><button id="logout">Log out</button></header>
+  <header><button id="menu">☰</button><b style="flex:1">Milktea POS</b></header>
+  <div id="scrim" hidden></div><div id="picker" hidden></div>
+  <nav id="drawer"><button id="tSell">Sell</button><button id="tOrders">Orders</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="tInv">Inventory</button><button id="logout">Log out</button></nav>
   <div id="sell" class="wrap">
-    <div><div class="tabs" id="tabs"></div><div class="grid" id="grid"></div></div>
+    <div><div class="grid" id="grid"></div><div class="pages" id="tabs"></div></div>
     <div class="card">
       <h3 style="margin-top:0" id="tkTitle">Current order</h3>
       <select id="dine" style="width:100%"><option>Dine in</option><option>Takeout</option><option>Delivery</option></select>
@@ -75,6 +87,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
       <h3 id="edTitle" style="margin-top:0"></h3>
       <div style="display:grid;gap:8px;max-width:520px">
         <input id="fName" placeholder="Name" style="font-size:1.2em">
+        <div class="tabs" style="align-items:center"><img id="fImg" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px;background:#eee"><input id="fPhoto" type="file" accept="image/*"><button type="button" id="fPhotoDel">Remove photo</button></div>
         <select id="fCat"></select><input id="fCatNew" placeholder="New category name" hidden>
         <input id="fSize" placeholder="Size / variant, e.g. 16oz (optional)">
         <textarea id="fDesc" placeholder="Description" rows="2" style="padding:10px;border-radius:8px;border:1px solid #ccc;font:inherit"></textarea>
@@ -141,9 +154,22 @@ function renderItems() {
     <td style="white-space:nowrap"><button data-e="${i.id}">Edit</button> <button data-s="${i.id}">+ Size</button></td></tr>`).join('') + '</table>';
   $('itemList').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openEditor(allItems.find(i => i.id == b.dataset.e)));
   $('itemList').querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
-    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category }); });
+    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category, image_url: i.image_url }); });
 }
-let fLines = [];
+let fLines = [], fImgUrl = null;
+const showImg = () => { $('fImg').src = fImgUrl || ''; $('fImg').style.visibility = fImgUrl ? 'visible' : 'hidden'; };
+$('fPhoto').onchange = async () => {
+  const f = $('fPhoto').files[0]; if (!f) return;
+  try {
+    const bmp = await createImageBitmap(f), sc = Math.min(1, 480 / Math.max(bmp.width, bmp.height)), cv = document.createElement('canvas');
+    cv.width = Math.round(bmp.width * sc); cv.height = Math.round(bmp.height * sc); cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.82)), path = `item-${Date.now()}.jpg`;
+    const { error } = await db.storage.from('item-photos').upload(path, blob, { contentType: 'image/jpeg' });
+    if (error) return alert('Photo upload failed: ' + error.message);
+    fImgUrl = db.storage.from('item-photos').getPublicUrl(path).data.publicUrl; showImg();
+  } catch (e) { alert('Could not read that photo. Try a JPG or PNG.'); }
+};
+$('fPhotoDel').onclick = () => { fImgUrl = null; $('fPhoto').value = ''; showImg(); };
 function openEditor(i) {
   editId = i.id || null; $('edTitle').textContent = editId ? 'Edit item' : 'New item';
   $('fName').value = i.name || ''; $('fSize').value = i.size || ''; $('fDesc').value = i.description || '';
@@ -153,6 +179,7 @@ function openEditor(i) {
   $('fPrice').value = i.price ?? ''; $('fCogs').value = i.cogs ?? ''; $('fActive').checked = i.active !== false;
   document.querySelectorAll('[name=fSold]').forEach(r => r.checked = r.value === (i.sold_by || 'each'));
   $('fSku').value = i.sku || String(Math.max(10000, ...allItems.map(x => parseInt(x.sku) || 0)) + 1); $('fBar').value = i.barcode || '';
+  fImgUrl = i.image_url || null; showImg();
   fLines = (recipes[i.id] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawF();
   $('editor').hidden = false; $('fName').focus();
 }
@@ -178,7 +205,7 @@ $('fSave').onclick = async () => {
   const cat = $('fCat').value === '__new' ? $('fCatNew').value.trim() : $('fCat').value, lines = fLines.filter(l => l.qty > 0), price = $('fPrice').value.trim();
   const row = { name: $('fName').value.trim(), size: $('fSize').value.trim() || null, category: cat, description: $('fDesc').value.trim() || null,
     price: price === '' ? null : parseFloat(price), active: $('fActive').checked, sold_by: document.querySelector('[name=fSold]:checked').value,
-    sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null,
+    sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null, image_url: fImgUrl,
     cogs: lines.length ? Math.round(cupCost(lines) * 100) / 100 : ($('fCogs').value === '' ? null : parseFloat($('fCogs').value)) };
   if (!row.name || !row.category || (row.price !== null && isNaN(row.price))) return alert('Please fill in the name and category, and check the price.');
   let r = editId ? await db.from('items').update(row).eq('id', editId).select().single() : await db.from('items').insert(row).select().single();
@@ -220,7 +247,7 @@ async function loadInv() {
   const err = a.error || b.error || c.error || d.error; if (err) return console.warn(err.message);
   ings = a.data; sups = b.data; stockMap = {}; recipes = {}; d.data.forEach(r => (recipes[r.item_id] = recipes[r.item_id] || []).push(r)); c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
   const low = ings.filter(i => i.low_stock > 0 && (stockMap[i.id] || 0) <= i.low_stock);
-  $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory';
+  $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory'; $('menu').textContent = low.length ? '☰ ●' : '☰';
   $('lowBanner').innerHTML = low.length ? `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>Time to restock:</b> ${low.map(i => esc(i.name) + ' (' + +(stockMap[i.id] || 0).toFixed(2) + ' ' + i.unit + ' left)').join(', ')}</div>` : '';
   if (!$('inv').hidden) renderInv();
 }
@@ -344,17 +371,28 @@ function renderTabs() {
   cats.forEach(c => { const b = document.createElement('button'); b.textContent = c; if (c === cat) b.className = 'on';
     b.onclick = () => { cat = c; renderTabs(); renderGrid(); }; $('tabs').appendChild(b); });
 }
+function tap(i) {
+  let q = 1;
+  if (i.sold_by === 'weight') { q = parseFloat(prompt('Quantity (weight or volume)?')); if (!(q > 0)) return; }
+  if (i.price == null && custom[i.id] == null) { const p = parseFloat(prompt('Price for ' + i.name + '?')); if (isNaN(p) || p < 0) return; custom[i.id] = p; }
+  cart[i.id] = (cart[i.id] || 0) + q; renderCart();
+}
+function pick(vs) {
+  const p = $('picker'); p.hidden = false;
+  p.innerHTML = `<div><b>${esc(vs[0].name)}</b>${vs.map((v, n) => `<button data-v="${n}">${esc(v.size || 'Regular')} · ${v.price == null ? 'Ask price' : P(v.price)}</button>`).join('')}<button id="pCancel">Cancel</button></div>`;
+  p.querySelectorAll('[data-v]').forEach(x => x.onclick = () => { p.hidden = true; tap(vs[x.dataset.v]); });
+  $('pCancel').onclick = () => p.hidden = true; p.onclick = e => { if (e.target === p) p.hidden = true; };
+}
 function renderGrid() {
-  $('grid').innerHTML = '';
-  items.filter(i => cat === 'All' || i.category === cat).forEach(i => {
-    const b = document.createElement('button');
-    b.style.background = `hsl(${[...i.category].reduce((h, c) => h + c.charCodeAt(0), 0) * 37 % 360} 45% 90%)`;
-    b.innerHTML = `${i.name}<small>${i.size || ''}</small><b>${i.price == null ? 'Ask price' : P(i.price)}</b>`;
-    b.onclick = () => {
-      let q = 1;
-      if (i.sold_by === 'weight') { q = parseFloat(prompt('Quantity (weight or volume)?')); if (!(q > 0)) return; }
-      if (i.price == null && custom[i.id] == null) { const p = parseFloat(prompt('Price for ' + i.name + '?')); if (isNaN(p) || p < 0) return; custom[i.id] = p; }
-      cart[i.id] = (cart[i.id] || 0) + q; renderCart(); }; $('grid').appendChild(b);
+  $('grid').innerHTML = ''; const groups = new Map();
+  items.filter(i => cat === 'All' || i.category === cat).forEach(i => { const k = i.category + '|' + i.name; (groups.get(k) || groups.set(k, []).get(k)).push(i); });
+  groups.forEach(vs => {
+    const v0 = vs[0], img = (vs.find(v => v.image_url) || {}).image_url, ps = vs.filter(v => v.price != null).map(v => +v.price), b = document.createElement('button');
+    b.className = 'tile' + (img ? '' : ' nophoto');
+    b.style.backgroundColor = `hsl(${[...v0.category].reduce((h, c) => h + c.charCodeAt(0), 0) * 37 % 360} 45% 88%)`;
+    if (img) b.style.backgroundImage = 'url("' + img + '")';
+    b.innerHTML = `<div class="cap">${esc(v0.name)}<small>${vs.length > 1 ? vs.map(v => esc(v.size)).join(' / ') : esc(v0.size)} · ${ps.length ? (vs.length > 1 ? 'from ' : '') + P(Math.min(...ps)) : 'Ask price'}</small></div>`;
+    b.onclick = () => vs.length === 1 ? tap(v0) : pick(vs); $('grid').appendChild(b);
   });
 }
 function totals() {
@@ -511,4 +549,7 @@ function drawReport() {
 $('csv').onclick = () => { if (!last) return;
   const csv = ['Date,Gross sales,Refunds,Discounts,Net sales,Gross profit', ...last.tbl.map(r => [r.k, r.c.gross, r.c.refunds, r.c.disc, r.c.net, r.c.profit].map(v => typeof v === 'number' ? v.toFixed(2) : v).join(','))].join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `sales-${$('from').value}-to-${$('to').value}.csv`; a.click(); };
+const closeMenu = () => { $('drawer').classList.remove('open'); $('scrim').hidden = true; };
+$('menu').onclick = () => { $('drawer').classList.add('open'); $('scrim').hidden = false; };
+$('scrim').onclick = closeMenu; $('drawer').querySelectorAll('button').forEach(b => b.addEventListener('click', closeMenu));
 </script></body></html>
