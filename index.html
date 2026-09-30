@@ -73,13 +73,17 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <div id="itemList" style="overflow-x:auto"></div>
     <div id="editor" class="card" style="border:1px solid #ddd;margin-top:12px" hidden>
       <h3 id="edTitle" style="margin-top:0"></h3>
-      <div style="display:grid;gap:8px;max-width:360px">
-        <input id="fName" placeholder="Item name">
+      <div style="display:grid;gap:8px;max-width:520px">
+        <input id="fName" placeholder="Name" style="font-size:1.2em">
+        <select id="fCat"></select><input id="fCatNew" placeholder="New category name" hidden>
         <input id="fSize" placeholder="Size / variant, e.g. 16oz (optional)">
-        <input id="fCat" list="cats" placeholder="Category"><datalist id="cats"></datalist>
-        <input id="fPrice" type="number" min="0" step="0.01" placeholder="Selling price">
-        <input id="fCogs" type="number" min="0" step="0.01" placeholder="Cost per cup (optional)">
-        <label><input type="checkbox" id="fActive" checked> Show on sales screen</label>
+        <textarea id="fDesc" placeholder="Description" rows="2" style="padding:10px;border-radius:8px;border:1px solid #ccc;font:inherit"></textarea>
+        <label><input type="checkbox" id="fActive" checked> The item is available for sale</label>
+        <div>Sold by &nbsp;<label><input type="radio" name="fSold" value="each" checked> Each</label> &nbsp;<label><input type="radio" name="fSold" value="weight"> Weight/Volume</label></div>
+        <input id="fPrice" type="number" min="0" step="0.01" placeholder="Price"><small>To enter the price when selling, leave the field blank</small>
+        <input id="fCogs" type="number" min="0" step="0.01" placeholder="Cost"><small id="fCogsNote"></small>
+        <input id="fSku" placeholder="SKU"><input id="fBar" placeholder="Barcode">
+        <h4 style="margin:8px 0 0">Recipe (ingredients used per cup)</h4><div id="fRecipe"></div>
         <div class="tabs"><button class="pri" id="fSave">Save</button><button id="fCancel">Cancel</button></div>
       </div>
     </div>
@@ -95,7 +99,8 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
 const P = n => '₱' + Number(n || 0).toFixed(2);
 const day = d => d.toLocaleDateString('en-CA');
-let items = [], cat = 'All', cart = {}, cur = null, openOrders = [];
+let items = [], cat = 'All', cart = {}, custom = {}, cur = null, openOrders = [];
+const pr = i => custom[i.id] ?? i.price;
 
 (async () => {
   const { data: { session } } = await db.auth.getSession();
@@ -128,33 +133,62 @@ async function loadItems() {
   renderTabs(); renderGrid(); renderCart();
 }
 function renderItems() {
-  $('cats').innerHTML = [...new Set(allItems.map(i => i.category))].map(c => `<option value="${esc(c)}">`).join('');
   const rows = allItems.filter(i => i.active || $('showHidden').checked)
     .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name) || a.id - b.id);
   $('itemList').innerHTML = '<table><tr><th>Item</th><th>Size</th><th>Category</th><th>Price</th><th>Cost</th><th></th></tr>' +
     rows.map(i => `<tr style="${i.active ? '' : 'opacity:.5'}"><td>${esc(i.name)}</td><td>${esc(i.size)}</td><td>${esc(i.category)}</td>
-    <td>${P(i.price)}</td><td>${i.cogs == null ? '—' : P(i.cogs)}</td>
+    <td>${i.price == null ? 'Ask' : P(i.price)}</td><td>${i.cogs == null ? '—' : P(i.cogs)}</td>
     <td style="white-space:nowrap"><button data-e="${i.id}">Edit</button> <button data-s="${i.id}">+ Size</button></td></tr>`).join('') + '</table>';
   $('itemList').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openEditor(allItems.find(i => i.id == b.dataset.e)));
   $('itemList').querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
     const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category }); });
 }
+let fLines = [];
 function openEditor(i) {
   editId = i.id || null; $('edTitle').textContent = editId ? 'Edit item' : 'New item';
-  $('fName').value = i.name || ''; $('fSize').value = i.size || ''; $('fCat').value = i.category || '';
+  $('fName').value = i.name || ''; $('fSize').value = i.size || ''; $('fDesc').value = i.description || '';
+  const cats = [...new Set(allItems.map(x => x.category))].sort();
+  $('fCat').innerHTML = cats.map(c => `<option value="${esc(c)}"${c === i.category ? ' selected' : ''}>${esc(c)}</option>`).join('') + '<option value="__new">+ New category…</option>';
+  if (!cats.length) $('fCat').value = '__new'; $('fCatNew').value = ''; $('fCatNew').hidden = $('fCat').value !== '__new';
   $('fPrice').value = i.price ?? ''; $('fCogs').value = i.cogs ?? ''; $('fActive').checked = i.active !== false;
+  document.querySelectorAll('[name=fSold]').forEach(r => r.checked = r.value === (i.sold_by || 'each'));
+  $('fSku').value = i.sku || String(Math.max(10000, ...allItems.map(x => parseInt(x.sku) || 0)) + 1); $('fBar').value = i.barcode || '';
+  fLines = (recipes[i.id] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawF();
   $('editor').hidden = false; $('fName').focus();
+}
+function drawF() {
+  if (!ings.length) { $('fRecipe').innerHTML = '<small>Add your ingredients in the Inventory tab first, then build the recipe here.</small>'; return; }
+  $('fRecipe').innerHTML = fLines.map((r, n) => { const g = ings.find(i => i.id == r.ingredient_id);
+    return `<div class="line"><select data-fi="${n}" style="flex:1">${ings.map(i => `<option value="${i.id}"${i.id == r.ingredient_id ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}</select>
+    <input data-fq="${n}" type="number" min="0" step="any" value="${r.qty}" style="width:80px"><small>${g ? (g.brew_g_per_l > 0 ? 'ml tea' : g.unit) : ''}</small><button data-fx="${n}">✕</button></div>`; }).join('')
+    + '<button id="fAddIng">+ Add component</button><div class="row"><span>Total cost per cup</span><b id="fCost"></b></div>';
+  const cost = () => { const has = fLines.some(l => l.qty > 0), c = cupCost(fLines.filter(l => l.qty > 0)); $('fCost').textContent = P(c);
+    $('fCogs').disabled = has; if (has) $('fCogs').value = c.toFixed(2); $('fCogsNote').textContent = has ? 'Calculated from the recipe' : ''; };
+  cost(); const R = $('fRecipe');
+  R.querySelectorAll('[data-fi]').forEach(x => x.onchange = () => { fLines[x.dataset.fi].ingredient_id = x.value; drawF(); });
+  R.querySelectorAll('[data-fq]').forEach(x => x.oninput = () => { fLines[x.dataset.fq].qty = num(x.value); cost(); });
+  R.querySelectorAll('[data-fx]').forEach(x => x.onclick = () => { fLines.splice(x.dataset.fx, 1); drawF(); });
+  $('fAddIng').onclick = () => { fLines.push({ ingredient_id: ings[0].id, qty: 0 }); drawF(); };
 }
 $('addItem').onclick = () => openEditor({});
 $('fCancel').onclick = () => $('editor').hidden = true;
+$('fCat').onchange = () => $('fCatNew').hidden = $('fCat').value !== '__new';
 $('showHidden').onchange = renderItems;
 $('fSave').onclick = async () => {
-  const row = { name: $('fName').value.trim(), size: $('fSize').value.trim() || null, category: $('fCat').value.trim(),
-    price: parseFloat($('fPrice').value), cogs: $('fCogs').value === '' ? null : parseFloat($('fCogs').value), active: $('fActive').checked };
-  if (!row.name || !row.category || isNaN(row.price)) return alert('Please fill in the name, category, and price.');
-  const { error } = editId ? await db.from('items').update(row).eq('id', editId) : await db.from('items').insert(row);
-  if (error) return alert(error.message);
-  $('editor').hidden = true; await loadItems(); renderItems();
+  const cat = $('fCat').value === '__new' ? $('fCatNew').value.trim() : $('fCat').value, lines = fLines.filter(l => l.qty > 0), price = $('fPrice').value.trim();
+  const row = { name: $('fName').value.trim(), size: $('fSize').value.trim() || null, category: cat, description: $('fDesc').value.trim() || null,
+    price: price === '' ? null : parseFloat(price), active: $('fActive').checked, sold_by: document.querySelector('[name=fSold]:checked').value,
+    sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null,
+    cogs: lines.length ? Math.round(cupCost(lines) * 100) / 100 : ($('fCogs').value === '' ? null : parseFloat($('fCogs').value)) };
+  if (!row.name || !row.category || (row.price !== null && isNaN(row.price))) return alert('Please fill in the name and category, and check the price.');
+  let r = editId ? await db.from('items').update(row).eq('id', editId).select().single() : await db.from('items').insert(row).select().single();
+  if (r.error) return alert(r.error.message);
+  const id = r.data.id;
+  if (ings.length) {
+    r = await db.from('recipe_lines').delete().eq('item_id', id); if (r.error) return alert(r.error.message);
+    if (lines.length) { r = await db.from('recipe_lines').insert(lines.map(l => ({ item_id: id, ingredient_id: l.ingredient_id, qty: l.qty }))); if (r.error) return alert(r.error.message); }
+  }
+  $('editor').hidden = true; await loadInv(); await loadItems(); renderItems();
 };
 let ings = [], sups = [], recipes = {}, stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
 const num = v => parseFloat(v) || 0;
@@ -222,7 +256,7 @@ function drawRec() {
     return `<tr><td><select data-ri="${n}">${ings.map(i => `<option value="${i.id}"${i.id == r.ingredient_id ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}</select></td>
     <td><input data-rq="${n}" type="number" min="0" step="any" value="${r.qty}" style="width:90px"> ${g ? (g.brew_g_per_l > 0 ? 'ml of brewed tea' : g.unit) : ''}</td><td><button data-rx="${n}">✕</button></td></tr>`; }).join('') + `</table>
     <button id="r_add">+ Add ingredient</button><div class="row big"><span>Cost per cup</span><span id="r_cost"></span></div>
-    <div class="row"><span>Selling price</span><span>${P(it.price)}</span></div><button class="pri" id="r_save">Save recipe</button>`;
+    <div class="row"><span>Selling price</span><span>${it.price == null ? 'Ask at sale' : P(it.price)}</span></div><button class="pri" id="r_save">Save recipe</button>`;
   const showCost = () => $('r_cost').textContent = P(cupCost(recLines)); showCost();
   rb.querySelectorAll('[data-ri]').forEach(x => x.onchange = () => { recLines[x.dataset.ri].ingredient_id = x.value; drawRec(); });
   rb.querySelectorAll('[data-rq]').forEach(x => x.oninput = () => { recLines[x.dataset.rq].qty = num(x.value); showCost(); });
@@ -315,12 +349,16 @@ function renderGrid() {
   items.filter(i => cat === 'All' || i.category === cat).forEach(i => {
     const b = document.createElement('button');
     b.style.background = `hsl(${[...i.category].reduce((h, c) => h + c.charCodeAt(0), 0) * 37 % 360} 45% 90%)`;
-    b.innerHTML = `${i.name}<small>${i.size || ''}</small><b>${P(i.price)}</b>`;
-    b.onclick = () => { cart[i.id] = (cart[i.id] || 0) + 1; renderCart(); }; $('grid').appendChild(b);
+    b.innerHTML = `${i.name}<small>${i.size || ''}</small><b>${i.price == null ? 'Ask price' : P(i.price)}</b>`;
+    b.onclick = () => {
+      let q = 1;
+      if (i.sold_by === 'weight') { q = parseFloat(prompt('Quantity (weight or volume)?')); if (!(q > 0)) return; }
+      if (i.price == null && custom[i.id] == null) { const p = parseFloat(prompt('Price for ' + i.name + '?')); if (isNaN(p) || p < 0) return; custom[i.id] = p; }
+      cart[i.id] = (cart[i.id] || 0) + q; renderCart(); }; $('grid').appendChild(b);
   });
 }
 function totals() {
-  const sub = Object.entries(cart).reduce((s, [id, q]) => s + items.find(i => i.id == id).price * q, 0);
+  const sub = Object.entries(cart).reduce((s, [id, q]) => s + pr(items.find(i => i.id == id)) * q, 0);
   const disc = Math.min(+$('disc').value || 0, sub);
   return { sub, disc, total: sub - disc };
 }
@@ -328,7 +366,7 @@ function renderCart() {
   $('lines').innerHTML = '';
   Object.entries(cart).forEach(([id, q]) => {
     const i = items.find(x => x.id == id), d = document.createElement('div'); d.className = 'line';
-    d.innerHTML = `<span style="flex:1">${i.name} ${i.size || ''}</span><button>-</button><b>${q}</b><button>+</button><span>${P(i.price * q)}</span>`;
+    d.innerHTML = `<span style="flex:1">${i.name} ${i.size || ''}</span><button>-</button><b>${q}</b><button>+</button><span>${P(pr(i) * q)}</span>`;
     const [m, p] = d.querySelectorAll('button');
     m.onclick = () => { if (--cart[id] <= 0) delete cart[id]; renderCart(); };
     p.onclick = () => { cart[id]++; renderCart(); }; $('lines').appendChild(d);
@@ -337,7 +375,7 @@ function renderCart() {
   $('chg').textContent = P(Math.max(0, (+$('cash').value || 0) - t.total));
 }
 ['disc', 'cash'].forEach(id => $(id).oninput = renderCart);
-$('clear').onclick = () => { cart = {}; cur = null; $('disc').value = ''; $('cash').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
+$('clear').onclick = () => { cart = {}; custom = {}; cur = null; $('disc').value = ''; $('cash').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
 const fail = e => { alert(e.message); return null; };
 async function persist(status) {
   if (!Object.keys(cart).length) { alert('The order is empty.'); return null; }
@@ -347,7 +385,7 @@ async function persist(status) {
     customer_name: $('cname').value.trim() || null, payment_type: paid ? pay : null,
     cash_received: cashPay ? cash : null, change_given: cashPay ? cash - t.total : null, paid_at: paid ? new Date().toISOString() : null };
   const lines = id => Object.entries(cart).map(([iid, q]) => { const i = items.find(x => x.id == iid);
-    return { sale_id: id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: i.price, unit_cogs: i.cogs }; });
+    return { sale_id: id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: pr(i), unit_cogs: i.cogs }; });
   let id = cur, r;
   if (id) {
     const old = (openOrders.find(s => s.id == id) || {}).sale_items || [];
@@ -395,8 +433,8 @@ async function loadOrders() {
     await db.from('sales').update({ voided: true }).eq('id', b.dataset.r); loadOrders(); });
 }
 function openOrder(s) {
-  cart = {};
-  s.sale_items.forEach(l => { if (items.find(i => i.id == l.item_id)) cart[l.item_id] = l.qty; else alert(l.item_name + ' is no longer on the menu, so it was left out.'); });
+  cart = {}; custom = {};
+  s.sale_items.forEach(l => { if (items.find(i => i.id == l.item_id)) { cart[l.item_id] = l.qty; if (items.find(i => i.id == l.item_id).price == null) custom[l.item_id] = +l.unit_price; } else alert(l.item_name + ' is no longer on the menu, so it was left out.'); });
   cur = s.id; $('dine').value = s.dining_option; $('cname').value = s.customer_name || ''; $('disc').value = s.discount || '';
   $('tkTitle').textContent = 'Order #' + s.id + ' (unpaid)'; show('sell'); renderCart();
 }
