@@ -593,8 +593,10 @@ function drawPL() {
 function drawHealth() {
   const h = (typeof last !== 'undefined' && last && last.health) || {}, pc = v => (Number(v) || 0).toFixed(1) + '%',
     box = (label, v) => `<div class="card"><small>${label}</small><div class="big">${pc(v)}</div></div>`;
+  const pl = typeof last !== 'undefined' && last && last.pl, warn = pl && pl.partial === false && pl.operating_expenses === 0
+    ? '<div style="background:#fff4d6;padding:8px;border-radius:8px;margin:6px 0">⚠ Expense data may be incomplete. No operating expenses are recorded for this period. Net Profit and Net Margin may be overstated.</div>' : '';
   $('healthBox').innerHTML = '<b>Business Health</b><div class="stats">' + box('Gross Margin', h.gross_margin) + box('COGS %', h.cogs_pct) + box('Operating Expense %', h.opex_pct) + box('Net Margin', h.net_margin) + `<div class="card"><small>Avg Daily Net Sales</small><div class="big">${P(h.avg_daily_sales)}</div></div>`
-    + '</div><small style="color:#777">Net margin is based on recorded operating expenses.</small>';
+    + '</div><small style="color:#777">Net margin is based on recorded operating expenses.</small>' + warn;
 }
 function drawOX() {
   const rows = Object.entries(last.opexByCat || {}).sort((a, b) => b[1] - a[1]), total = rows.reduce((t, [, v]) => t + v, 0);
