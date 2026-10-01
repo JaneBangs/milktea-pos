@@ -69,6 +69,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
       <div id="hPrev" style="margin:8px 0"></div><button class="pri" id="hGo" hidden>Import</button></details>
     <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div>
     <div id="plBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
+    <div id="oxBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
     <div class="tabs" style="align-items:center"><b id="chTitle" style="flex:1"></b><select id="grp"><option value="d">Days</option><option value="w">Weeks</option><option value="m">Months</option></select></div>
     <div id="chart"></div>
     <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button></div>
@@ -562,10 +563,10 @@ const calc = rows => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 
   o.profit = o.net - o.cost; return o; };
 async function loadReport() {
   const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
-  const pf = new Date(+from - (to - from)), [rows, prev, hist, hprev, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to), fetchExp(pf, from)]);
+  const oxCat = {}, pf = new Date(+from - (to - from)), [rows, prev, hist, hprev, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to, oxCat), fetchExp(pf, from)]);
   if (!rows || !prev) return;
   const cur = addc(calc(rows), hcalc(hist)), prv = addc(calc(prev), hcalc(hprev));
-  last = { rows, hist, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev) }; drawReport();
+  last = { rows, hist, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; drawReport();
 }
 const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
 const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
@@ -588,9 +589,17 @@ function drawPL() {
     + row('Net sales', 'net_sales') + row('Less: COGS', 'cogs') + row('Gross profit', 'gross_profit', 1)
     + row('Less: Operating expenses' + (a.partial ? ' (not included)' : ''), 'operating_expenses') + row('Net profit' + (a.partial ? ' (partial)' : ''), 'net_profit', 1) + '</table></div>';
 }
+function drawOX() {
+  const rows = Object.entries(last.opexByCat || {}).sort((a, b) => b[1] - a[1]), total = rows.reduce((t, [, v]) => t + v, 0);
+  $('oxBox').innerHTML = '<b>Operating Expense Breakdown</b>'
+    + (last.pl.partial ? '<div style="background:#fff4d6;padding:8px;border-radius:8px;margin:6px 0">A time-of-day filter is on, so operating expenses are not included. Choose "All day" to see them.</div>' : '')
+    + '<div style="overflow-x:auto"><table><tr><th>Category</th><th>Amount</th></tr>'
+    + (rows.length ? rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${P(v)}</td></tr>`).join('') : '<tr><td colspan="2"><small>No operating expenses recorded for this period.</small></td></tr>')
+    + `<tr style="font-weight:700"><td>Total operating expenses</td><td>${P(total)}</td></tr></table></div>`;
+}
 function drawReport() {
   const { rows, hist, from, to, cur, prev, days } = last, g = $('grp').value, ok = rows.filter(s => !s.voided);
-  drawPL();
+  drawPL(); drawOX();
   $('stats').innerHTML = Object.keys(MET).map(k => { const d = cur[k] - prev[k], pct = prev[k] ? d / Math.abs(prev[k]) * 100 : null,
     col = k === 'refunds' || k === 'disc' ? '#777' : d >= 0 ? '#2a8a2a' : '#c33';
     return `<div class="card" data-m="${k}" style="cursor:pointer;${k === met ? 'border-bottom:3px solid #8b5e3c' : ''}"><small>${MET[k]}</small><div class="big">${P(cur[k])}</div>
@@ -691,11 +700,13 @@ const hcalc = hs => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 0
 const addc = (a, b) => { const o = {}; for (const k in a) o[k] = a[k] + b[k]; return o; };
 // Inventory purchases are not operating expenses: ingredients and packaging become stock and reach COGS when sold.
 const INV_EXP_CATS = ['Ingredients / Raw Materials', 'Packaging'];
-async function fetchExp(from, to) {
+async function fetchExp(from, to, byCat) {
   if ($('tod').value !== '0-24') return 0;
   const r = await db.from('expenses').select('category, amount').gte('expense_date', day(from)).lt('expense_date', day(to));
   if (r.error) { console.warn(r.error.message); return 0; }
-  return r.data.filter(e => !INV_EXP_CATS.includes(e.category)).reduce((t, e) => t + +e.amount, 0);
+  const ox = r.data.filter(e => !INV_EXP_CATS.includes(e.category));
+  if (byCat) ox.forEach(e => byCat[e.category] = (byCat[e.category] || 0) + +e.amount);
+  return ox.reduce((t, e) => t + +e.amount, 0);
 }
 const plCalc = (c, opex) => ({ net_sales: c.net, cogs: c.cost, gross_profit: c.net - c.cost, operating_expenses: opex, net_profit: c.net - c.cost - opex });
 async function fetchHist(from, to) {
