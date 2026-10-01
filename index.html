@@ -63,6 +63,9 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
       <select id="tod"><option value="0-24">All day</option><option value="6-12">Morning (6 AM–12 PM)</option><option value="12-18">Afternoon (12–6 PM)</option><option value="18-24">Evening (6 PM–12 AM)</option></select>
       <button class="pri" id="go">Show</button></div>
     <div class="tabs"><button id="rToday">Today</button><button id="r7">Last 7 days</button><button id="rMonth">This month</button><button id="rYear">This year</button></div>
+    <details style="margin:8px 0"><summary><b>Import Loyverse history</b> (daily Sales summary CSV files)</summary>
+      <div class="tabs" style="margin-top:8px;align-items:center"><input id="hFiles" type="file" accept=".csv" multiple><label>Only import days before <input id="hCut" type="date"></label></div>
+      <div id="hPrev" style="margin:8px 0"></div><button class="pri" id="hGo" hidden>Import</button></details>
     <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div>
     <div class="tabs" style="align-items:center"><b id="chTitle" style="flex:1"></b><select id="grp"><option value="d">Days</option><option value="w">Weeks</option><option value="m">Months</option></select></div>
     <div id="chart"></div>
@@ -535,9 +538,9 @@ const calc = rows => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 
   o.profit = o.net - o.cost; return o; };
 async function loadReport() {
   const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
-  const pf = new Date(+from - (to - from)), [rows, prev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from)]);
+  const pf = new Date(+from - (to - from)), [rows, prev, hist, hprev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from)]);
   if (!rows || !prev) return;
-  last = { rows, from, to, cur: calc(rows), prev: calc(prev), days: Math.round((to - from) / 864e5) }; drawReport();
+  last = { rows, hist, from, to, cur: addc(calc(rows), hcalc(hist)), prev: addc(calc(prev), hcalc(hprev)), days: Math.round((to - from) / 864e5) }; drawReport();
 }
 const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
 const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
@@ -551,7 +554,7 @@ function chart(pts) {
     + pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="3" fill="#fff" stroke="#8b5e3c"><title>${p.label}: ${P(p.v)}</title></circle>${i % step ? '' : `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="#777">${p.label}</text>`}`).join('') + '</svg>';
 }
 function drawReport() {
-  const { rows, from, to, cur, prev, days } = last, g = $('grp').value, ok = rows.filter(s => !s.voided);
+  const { rows, hist, from, to, cur, prev, days } = last, g = $('grp').value, ok = rows.filter(s => !s.voided);
   $('stats').innerHTML = Object.keys(MET).map(k => { const d = cur[k] - prev[k], pct = prev[k] ? d / Math.abs(prev[k]) * 100 : null,
     col = k === 'refunds' || k === 'disc' ? '#777' : d >= 0 ? '#2a8a2a' : '#c33';
     return `<div class="card" data-m="${k}" style="cursor:pointer;${k === met ? 'border-bottom:3px solid #8b5e3c' : ''}"><small>${MET[k]}</small><div class="big">${P(cur[k])}</div>
@@ -559,8 +562,9 @@ function drawReport() {
   $('stats').querySelectorAll('[data-m]').forEach(x => x.onclick = () => { met = x.dataset.m; drawReport(); });
   $('cmp').textContent = `${cur.orders} orders · compared with the previous ${days} day${days > 1 ? 's' : ''} · profit counts only items with a cost`;
   const groups = new Map(); rows.forEach(s => { const k = bkey(new Date(s.paid_at), g); (groups.get(k) || groups.set(k, []).get(k)).push(s); });
+  const hg = new Map(); hist.forEach(h => { const k = bkey(new Date(h.day + 'T00:00:00'), g); (hg.get(k) || hg.set(k, []).get(k)).push(h); });
   const keys = new Map(), d = new Date(from); while (d < to) { keys.set(bkey(d, g)); d.setDate(d.getDate() + 1); }
-  const tbl = [...keys.keys()].map(k => ({ k, label: blab(k, g), c: calc(groups.get(k) || []) }));
+  const tbl = [...keys.keys()].map(k => ({ k, label: blab(k, g), c: addc(calc(groups.get(k) || []), hcalc(hg.get(k) || [])) }));
   $('chTitle').textContent = MET[met]; $('chart').innerHTML = chart(tbl.map(r => ({ label: r.label, v: r.c[met] })));
   const f = v => v.toFixed(2); last.tbl = tbl;
   $('brk').innerHTML = '<table><tr><th>Date</th><th>Gross sales</th><th>Refunds</th><th>Discounts</th><th>Net sales</th><th>Gross profit</th></tr>' + [...tbl].reverse().map(r =>
@@ -646,6 +650,46 @@ $('dAdd').onclick = async () => {
   $('dName').value = ''; $('dVal').value = ''; loadDiscounts();
 };
 $('discSel').onchange = () => { discSel = discounts.find(d => d.id == $('discSel').value) || null; $('disc').disabled = !!discSel; if (!discSel) $('disc').value = ''; renderCart(); };
+const hcalc = hs => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 0, orders: 0 };
+  hs.forEach(h => { o.gross += +h.gross; o.refunds += +h.refunds; o.disc += +h.discounts; o.net += +h.net; o.cost += +h.cost; }); o.profit = o.net - o.cost; return o; };
+const addc = (a, b) => { const o = {}; for (const k in a) o[k] = a[k] + b[k]; return o; };
+async function fetchHist(from, to) {
+  if ($('tod').value !== '0-24') return [];
+  const r = await db.from('history_days').select('*').gte('day', day(from)).lt('day', day(to)); return r.error ? [] : r.data;
+}
+let hRows = [], hUse = [];
+const parseCSV = t => { const out = []; let row = [], f = '', q = false;
+  for (let i = 0; i < t.length; i++) { const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true; else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; row.push(f); f = ''; if (row.length > 1 || row[0] !== '') out.push(row); row = []; }
+    else f += c; }
+  if (f !== '' || row.length) { row.push(f); out.push(row); } return out; };
+const parseDay = t => { const m = t.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) return `${m[3].length === 2 ? 2000 + +m[3] : +m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; return /^\d{4}-\d\d-\d\d/.test(t) ? t.slice(0, 10) : null; };
+$('hFiles').onchange = async () => {
+  const map = new Map(); let bad = 0;
+  for (const f of $('hFiles').files) { const rows = parseCSV(await f.text()), h = (rows[0] || []).map(x => x.trim().toLowerCase()), ix = n => h.indexOf(n);
+    if (ix('date') < 0 || ix('net sales') < 0) { bad++; continue; }
+    rows.slice(1).forEach(r => { const d = parseDay(r[ix('date')] || ''); if (!d) return; const n = k => parseFloat(r[ix(k)]) || 0;
+      if (!n('gross sales') && !n('net sales') && !n('refunds')) return;
+      map.set(d, { day: d, gross: n('gross sales'), refunds: n('refunds'), discounts: n('discounts'), net: n('net sales'), cost: n('cost of goods'), source: 'loyverse' }); }); }
+  hRows = [...map.values()].sort((a, b) => a.day < b.day ? -1 : 1); hPreview(bad);
+};
+async function hPreview(bad) {
+  if (!$('hCut').value) { const r = await db.from('sales').select('paid_at').eq('status', 'paid').order('paid_at').limit(1);
+    $('hCut').value = r.data && r.data[0] ? day(new Date(r.data[0].paid_at)) : day(new Date(Date.now() + 864e5)); }
+  hUse = hRows.filter(r => r.day < $('hCut').value); const sm = k => hUse.reduce((t, r) => t + r[k], 0);
+  $('hPrev').innerHTML = (hRows.length ? `<b>${hUse.length} days</b> will be imported (${hUse.length ? hUse[0].day + ' to ' + hUse[hUse.length - 1].day : 'none'}); ${hRows.length - hUse.length} later days are skipped.<br>Net sales ${P(sm('net'))} · cost ${P(sm('cost'))} · profit ${P(sm('net') - sm('cost'))}` : 'No sales days found in those files.')
+    + (bad ? `<br><b>${bad} file(s) skipped: not a daily Sales summary.</b>` : '');
+  $('hGo').hidden = !hUse.length;
+}
+$('hCut').onchange = () => hRows.length && hPreview(0);
+$('hGo').onclick = async () => {
+  if (!confirm(`Import ${hUse.length} days of history? Days that were imported before will be replaced.`)) return;
+  for (let i = 0; i < hUse.length; i += 200) { const r = await db.from('history_days').upsert(hUse.slice(i, i + 200)); if (r.error) return alert(r.error.message); }
+  alert('History imported.'); $('hFiles').value = ''; hRows = []; hUse = []; $('hGo').hidden = true; $('hPrev').textContent = ''; loadReport();
+};
 const closeMenu = () => { $('drawer').classList.remove('open'); $('scrim').hidden = true; };
 $('menu').onclick = () => { $('drawer').classList.add('open'); $('scrim').hidden = false; };
 $('scrim').onclick = closeMenu; $('drawer').querySelectorAll('button').forEach(b => b.addEventListener('click', closeMenu));
