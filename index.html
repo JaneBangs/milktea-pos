@@ -48,6 +48,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
       <input id="cname" placeholder="Customer / table name (optional)" style="width:100%;margin-top:6px">
       <div id="lines"></div><hr>
       <div class="row"><span>Subtotal</span><span id="sub"></span></div>
+      <div class="row"><span>Discount</span><select id="discSel"><option value="">None / custom amount</option></select></div>
       <div class="row"><span>Discount (₱)</span><input id="disc" type="number" min="0" style="width:100px"></div>
       <div class="row big"><span>Total</span><span id="tot"></span></div>
       <div class="row"><span>Payment</span><select id="pay"><option value="cash">Cash</option><option value="gcash">GCash</option></select></div>
@@ -84,6 +85,10 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
   <div id="items" class="card" style="margin:12px" hidden>
     <div class="tabs"><button class="pri" id="addItem">+ Add item</button>
       <label style="align-self:center"><input type="checkbox" id="showHidden"> Show hidden items</label></div>
+    <details style="margin:8px 0"><summary><b>Discounts</b> (saved discounts for the sales screen)</summary>
+      <div id="discList" style="margin:8px 0"></div>
+      <div class="tabs"><input id="dName" placeholder="Name, e.g. Senior / PWD"><select id="dKind"><option value="percent">Percent (%)</option><option value="amount">Amount (₱)</option></select>
+        <input id="dVal" type="number" min="0" step="any" placeholder="Value" style="width:90px"><button class="pri" id="dAdd">Add discount</button></div></details>
     <div id="itemList" style="overflow-x:auto"></div>
     <div id="editor" class="card" style="border:1px solid #ddd;margin-top:12px" hidden>
       <h3 id="edTitle" style="margin-top:0"></h3>
@@ -137,7 +142,7 @@ $('tOrders').onclick = () => { show('orders'); loadOrders(); };
 
 async function start() {
   $('login').hidden = true; $('app').hidden = false;
-  await loadItems(); setRange(new Date(), new Date()); loadInv();
+  await loadItems(); setRange(new Date(), new Date()); loadInv(); loadDiscounts();
 }
 let allItems = [], editId = null;
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -158,7 +163,7 @@ function renderItems() {
     <td style="white-space:nowrap"><button data-e="${i.id}">Edit</button> <button data-s="${i.id}">+ Size</button></td></tr>`).join('') + '</table>';
   $('itemList').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openEditor(allItems.find(i => i.id == b.dataset.e)));
   $('itemList').querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
-    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category, image_url: i.image_url }); });
+    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category, image_url: i.image_url, copyFrom: i.id }); });
 }
 let fLines = [], fImgUrl = null;
 const showImg = () => { $('fImg').src = fImgUrl || ''; $('fImg').style.visibility = fImgUrl ? 'visible' : 'hidden'; };
@@ -184,7 +189,7 @@ function openEditor(i) {
   document.querySelectorAll('[name=fSold]').forEach(r => r.checked = r.value === (i.sold_by || 'each'));
   $('fSku').value = i.sku || String(Math.max(10000, ...allItems.map(x => parseInt(x.sku) || 0)) + 1); $('fBar').value = i.barcode || '';
   fImgUrl = i.image_url || null; showImg();
-  fLines = (recipes[i.id] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawF();
+  fLines = (recipes[i.id || i.copyFrom] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawF();
   $('editor').hidden = false; $('fName').focus();
 }
 function drawF() {
@@ -429,7 +434,8 @@ function renderGrid() {
 }
 function totals() {
   const sub = Object.entries(cart).reduce((s, [id, q]) => s + pr(items.find(i => i.id == id)) * q, 0);
-  const disc = Math.min(+$('disc').value || 0, sub);
+  const disc = Math.min(discSel ? Math.round((discSel.kind === 'percent' ? sub * discSel.value / 100 : +discSel.value) * 100) / 100 : (+$('disc').value || 0), sub);
+  if (discSel) $('disc').value = disc || '';
   return { sub, disc, total: sub - disc };
 }
 function renderCart() {
@@ -445,7 +451,7 @@ function renderCart() {
   $('chg').textContent = P(Math.max(0, (+$('cash').value || 0) - t.total));
 }
 ['disc', 'cash'].forEach(id => $(id).oninput = renderCart);
-$('clear').onclick = () => { cart = {}; custom = {}; cur = null; $('disc').value = ''; $('cash').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
+$('clear').onclick = () => { cart = {}; custom = {}; cur = null; discSel = null; $('discSel').value = ''; $('disc').disabled = false; $('disc').value = ''; $('cash').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
 const fail = e => { alert(e.message); return null; };
 async function persist(status) {
   if (!Object.keys(cart).length) { alert('The order is empty.'); return null; }
@@ -496,7 +502,7 @@ async function loadOrders() {
 function openOrder(s) {
   cart = {}; custom = {};
   s.sale_items.forEach(l => { if (items.find(i => i.id == l.item_id)) { cart[l.item_id] = l.qty; if (items.find(i => i.id == l.item_id).price == null) custom[l.item_id] = +l.unit_price; } else alert(l.item_name + ' is no longer on the menu, so it was left out.'); });
-  cur = s.id; $('dine').value = s.dining_option; $('cname').value = s.customer_name || ''; $('disc').value = s.discount || '';
+  cur = s.id; $('dine').value = s.dining_option; $('cname').value = s.customer_name || ''; discSel = null; $('discSel').value = ''; $('disc').disabled = false; $('disc').value = s.discount || '';
   $('tkTitle').textContent = 'Order #' + s.id + ' (unpaid)'; show('sell'); renderCart();
 }
 
@@ -624,6 +630,22 @@ async function loadShift() {
     if (!confirm(`Expected ${P(expected)}, counted ${P(c)} (${c - expected >= 0 ? 'over' : 'short'} by ${P(Math.abs(c - expected))}). Close this shift?`)) return;
     const r = await db.from('shifts').update({ closed_at: new Date().toISOString(), expected_cash: expected, counted_cash: c }).eq('id', sh.id); if (r.error) return alert(r.error.message); loadShift(); };
 }
+let discounts = [], discSel = null;
+async function loadDiscounts() {
+  const r = await db.from('discounts').select('*').eq('active', true).order('name'); if (r.error) return console.warn(r.error.message);
+  discounts = r.data; const keep = $('discSel').value, lab = d => d.kind === 'percent' ? +d.value + '%' : P(d.value);
+  $('discSel').innerHTML = '<option value="">None / custom amount</option>' + discounts.map(d => `<option value="${d.id}">${esc(d.name)} (${lab(d)})</option>`).join(''); $('discSel').value = keep;
+  $('discList').innerHTML = discounts.length ? '<table>' + discounts.map(d => `<tr><td>${esc(d.name)}</td><td>${lab(d)}</td><td><button data-dx="${d.id}">Delete</button></td></tr>`).join('') + '</table>' : '<small>No saved discounts yet.</small>';
+  $('discList').querySelectorAll('[data-dx]').forEach(x => x.onclick = async () => { if (!confirm('Delete this discount?')) return;
+    const r = await db.from('discounts').delete().eq('id', x.dataset.dx); if (r.error) return alert(r.error.message); loadDiscounts(); });
+}
+$('dAdd').onclick = async () => {
+  const v = num($('dVal').value), n = $('dName').value.trim(); if (!n || !(v > 0)) return alert('Enter a name and a value.');
+  if ($('dKind').value === 'percent' && v > 100) return alert('A percent discount cannot be more than 100.');
+  const r = await db.from('discounts').insert({ name: n, kind: $('dKind').value, value: v }); if (r.error) return alert(r.error.message);
+  $('dName').value = ''; $('dVal').value = ''; loadDiscounts();
+};
+$('discSel').onchange = () => { discSel = discounts.find(d => d.id == $('discSel').value) || null; $('disc').disabled = !!discSel; if (!discSel) $('disc').value = ''; renderCart(); };
 const closeMenu = () => { $('drawer').classList.remove('open'); $('scrim').hidden = true; };
 $('menu').onclick = () => { $('drawer').classList.add('open'); $('scrim').hidden = false; };
 $('scrim').onclick = closeMenu; $('drawer').querySelectorAll('button').forEach(b => b.addEventListener('click', closeMenu));
