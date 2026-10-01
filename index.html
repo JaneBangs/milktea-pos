@@ -52,7 +52,8 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
       <div class="row"><span>Discount</span><select id="discSel"><option value="">None / custom amount</option></select></div>
       <div class="row"><span>Discount (₱)</span><input id="disc" type="number" min="0" style="width:100px"></div>
       <div class="row big"><span>Total</span><span id="tot"></span></div>
-      <div class="row"><span>Payment</span><select id="pay"><option value="cash">Cash</option><option value="gcash">GCash</option></select></div>
+      <div class="row"><span>Payment</span><select id="pay"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank Transfer</option></select></div>
+      <div class="row" id="refRow" hidden><span>Reference No.</span><input id="payRef" placeholder="Optional" style="width:100px"></div>
       <div class="row"><span>Cash received</span><input id="cash" type="number" min="0" style="width:100px"></div>
       <div class="row"><span>Change</span><b id="chg">₱0.00</b></div>
       <button id="saveOrd" style="width:100%;margin-top:8px">Save order (unpaid)</button><button class="pri" id="charge" style="width:100%;margin-top:6px">Charge</button>
@@ -506,14 +507,16 @@ function renderCart() {
   $('chg').textContent = P(Math.max(0, (+$('cash').value || 0) - t.total));
 }
 ['disc', 'cash'].forEach(id => $(id).oninput = renderCart);
-$('clear').onclick = () => { cart = {}; custom = {}; cur = null; discSel = null; $('discSel').value = ''; $('disc').disabled = false; $('disc').value = ''; $('cash').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
+$('pay').onchange = () => $('refRow').hidden = $('pay').value === 'cash';
+const PAY_LABEL = { cash: 'Cash', gcash: 'GCash', bank: 'Bank Transfer' }, payLabel = t => PAY_LABEL[t] || t || '';
+$('clear').onclick = () => { cart = {}; custom = {}; cur = null; discSel = null; $('discSel').value = ''; $('disc').disabled = false; $('disc').value = ''; $('cash').value = ''; $('payRef').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
 const fail = e => { alert(e.message); return null; };
 async function persist(status) {
   if (!Object.keys(cart).length) { alert('The order is empty.'); return null; }
   const t = totals(), cash = +$('cash').value || 0, pay = $('pay').value, paid = status === 'paid', cashPay = paid && pay === 'cash';
   if (cashPay && cash < t.total) { alert('Cash received is less than the total.'); return null; }
   const base = { subtotal: t.sub, discount: t.disc, total: t.total, status, dining_option: $('dine').value,
-    customer_name: $('cname').value.trim() || null, payment_type: paid ? pay : null,
+    customer_name: $('cname').value.trim() || null, payment_type: paid ? pay : null, payment_ref: paid && pay !== 'cash' ? $('payRef').value.trim() || null : null,
     cash_received: cashPay ? cash : null, change_given: cashPay ? cash - t.total : null, paid_at: paid ? new Date().toISOString() : null };
   const lines = id => Object.entries(cart).map(([iid, q]) => { const i = items.find(x => x.id == iid);
     return { sale_id: id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: pr(i), unit_cogs: i.cogs }; });
@@ -682,13 +685,14 @@ function drawReceipts() {
   let lastDay = '', html = '';
   rcpts.forEach(s => { const d = new Date(s.paid_at).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     if (d !== lastDay) { html += `<div style="color:#8b5e3c;padding:10px 4px;font-weight:600">${d}</div>`; lastDay = d; }
-    html += `<div class="line" data-rc="${s.id}" style="cursor:pointer;padding:10px 6px;border-bottom:1px solid #eee;${s.id == rSel ? 'background:#f4f1ec;' : ''}${s.voided ? 'opacity:.45;' : ''}"><span><b>${P(s.total)}</b><br><small>${tm(s.paid_at)} · ${esc(s.payment_type)}${s.voided ? ' · refunded' : ''}</small></span><small>#${s.id}</small></div>`; });
+    html += `<div class="line" data-rc="${s.id}" style="cursor:pointer;padding:10px 6px;border-bottom:1px solid #eee;${s.id == rSel ? 'background:#f4f1ec;' : ''}${s.voided ? 'opacity:.45;' : ''}"><span><b>${P(s.total)}</b><br><small>${tm(s.paid_at)} · ${esc(payLabel(s.payment_type))}${s.voided ? ' · refunded' : ''}</small></span><small>#${s.id}</small></div>`; });
   const s = rcpts.find(x => x.id == rSel);
   const detail = !s ? 'No receipts yet.' : `<div style="text-align:center;margin-bottom:8px"><div style="font-size:2em">${P(s.total)}</div><small>Total</small></div><hr>
     <div class="row"><span>${esc(s.dining_option)}</span><span>${esc(s.customer_name || '')}</span></div><hr>
     ${s.sale_items.map(l => `<div class="row"><span>${esc(l.item_name)} ${esc(l.size)}<br><small>${+l.qty} × ${P(l.unit_price)}</small></span><span>${P(l.qty * l.unit_price)}</span></div>`).join('')}<hr>
     ${+s.discount ? `<div class="row"><span>Discount</span><span>-${P(s.discount)}</span></div>` : ''}<div class="row big"><span>Total</span><span>${P(s.total)}</span></div>
-    ${s.payment_type === 'cash' ? `<div class="row"><span>Cash</span><span>${P(s.cash_received)}</span></div><div class="row"><span>Change</span><span>${P(s.change_given)}</span></div>` : `<div class="row"><span>${esc(s.payment_type)}</span><span>${P(s.total)}</span></div>`}<hr>
+    <div class="row"><span>Payment</span><span>${esc(payLabel(s.payment_type))}</span></div>
+    ${s.payment_type === 'cash' ? `<div class="row"><span>Cash</span><span>${P(s.cash_received)}</span></div><div class="row"><span>Change</span><span>${P(s.change_given)}</span></div>` : s.payment_ref ? `<div class="row"><span>Reference No.</span><span>${esc(s.payment_ref)}</span></div>` : ''}<hr>
     <div class="row"><small>Ordered ${new Date(s.created_at).toLocaleString()}</small><small>#${s.id}</small></div><div class="row"><small>Paid ${new Date(s.paid_at).toLocaleString()}</small></div>
     ${s.voided ? '<p><b>Refunded</b></p>' : '<button id="rcRefund" style="width:100%;margin-top:8px">Refund</button>'}`;
   $('rcptBody').innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"><div style="max-height:75vh;overflow:auto">${html || 'No receipts yet.'}</div><div class="card" style="border:1px solid #ddd;align-self:start">${detail}</div></div>`;
@@ -714,7 +718,7 @@ async function loadShift() {
   const row = (a, v, b) => `<div class="row"${b ? ' style="font-weight:700"' : ''}><span>${a}</span><span>${P(v)}</span></div>`;
   $('shiftBody').innerHTML = `<h3 style="margin-top:0">Shift #${sh.id}</h3><small>Opened ${new Date(sh.opened_at).toLocaleString()}</small>
    <h4>Cash drawer</h4>${row('Starting cash', sh.starting_cash)}${row('Cash payments', cashPay)}${row('Cash refunds', cashRef)}${row('Paid in', pin)}${row('Paid out', pout)}${row('Expected cash amount', expected, 1)}
-   <h4>Sales summary</h4>${row('Gross sales', sum(sl.data, s => s.subtotal))}${row('Refunds', sum(rf, s => s.subtotal))}${row('Discounts', sum(ok, s => s.discount))}${row('Net sales', sum(ok, s => s.total), 1)}${row('Cash', sum(ok, cash))}${row('GCash', sum(ok, s => s.payment_type === 'gcash' ? s.total : 0))}
+   <h4>Sales summary</h4>${row('Gross sales', sum(sl.data, s => s.subtotal))}${row('Refunds', sum(rf, s => s.subtotal))}${row('Discounts', sum(ok, s => s.discount))}${row('Net sales', sum(ok, s => s.total), 1)}${row('Cash', sum(ok, cash))}${row('GCash', sum(ok, s => s.payment_type === 'gcash' ? s.total : 0))}${row('Bank Transfer', sum(ok, s => s.payment_type === 'bank' ? s.total : 0))}
    <h4>Cash management</h4><div class="tabs"><select id="cmKind"><option value="in">Paid in</option><option value="out">Paid out</option></select><input id="cmAmt" type="number" min="0" step="any" placeholder="Amount" style="width:110px"><input id="cmNote" placeholder="Note, e.g. bought ice" style="flex:1"><button id="cmAdd">Add</button></div>
    ${mv.data.map(m => `<div class="row"><span>${m.kind === 'in' ? 'Paid in' : 'Paid out'} · ${esc(m.note || '')}<br><small>${new Date(m.created_at).toLocaleString()}</small></span><span>${m.kind === 'out' ? '-' : ''}${P(m.amount)}</span></div>`).join('')}
    <h4>Close shift</h4><div class="tabs"><input id="sCount" type="number" min="0" step="any" placeholder="Cash counted in drawer (₱)"><button class="pri" id="sClose">Close shift</button></div>` + hist;
