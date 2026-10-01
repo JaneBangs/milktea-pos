@@ -566,7 +566,7 @@ async function loadReport() {
   const oxCat = {}, pf = new Date(+from - (to - from)), [rows, prev, hist, hprev, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to, oxCat), fetchExp(pf, from)]);
   if (!rows || !prev) return;
   const cur = addc(calc(rows), hcalc(hist)), prv = addc(calc(prev), hcalc(hprev));
-  last = { rows, hist, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; drawReport();
+  last = { rows, hist, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; last.health = calcHealth(last.pl); drawReport();
 }
 const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
 const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
@@ -709,6 +709,9 @@ async function fetchExp(from, to, byCat) {
   return ox.reduce((t, e) => t + +e.amount, 0);
 }
 const plCalc = (c, opex) => ({ net_sales: c.net, cogs: c.cost, gross_profit: c.net - c.cost, operating_expenses: opex, net_profit: c.net - c.cost - opex });
+// Business Health KPIs, derived only from the P&L values (percent of net sales; 0 when there are no net sales)
+const calcHealth = p => { const pct = v => p.net_sales > 0 ? v / p.net_sales * 100 : 0;
+  return { gross_margin: pct(p.gross_profit), cogs_pct: pct(p.cogs), opex_pct: pct(p.operating_expenses), net_margin: pct(p.net_profit) }; };
 async function fetchHist(from, to) {
   if ($('tod').value !== '0-24') return [];
   const r = await db.from('history_days').select('*').gte('day', day(from)).lt('day', day(to)); return r.error ? [] : r.data;
