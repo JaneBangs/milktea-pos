@@ -596,7 +596,17 @@ function drawHealth() {
   const pl = typeof last !== 'undefined' && last && last.pl, warn = pl && pl.partial === false && pl.operating_expenses === 0
     ? '<div style="background:#fff4d6;padding:8px;border-radius:8px;margin:6px 0">⚠ Expense data may be incomplete. No operating expenses are recorded for this period. Net Profit and Net Margin may be overstated.</div>' : '';
   $('healthBox').innerHTML = '<b>Business Health</b><div class="stats">' + box('Gross Margin', h.gross_margin) + box('COGS %', h.cogs_pct) + box('Operating Expense %', h.opex_pct) + box('Net Margin', h.net_margin) + `<div class="card"><small>Avg Daily Net Sales</small><div class="big">${P(h.avg_daily_sales)}</div></div>`
-    + '</div><small style="color:#777">Net margin is based on recorded operating expenses.</small>' + warn;
+    + '</div><small style="color:#777">Net margin is based on recorded operating expenses.</small>' + warn + '<div id="bwBox" style="margin-top:8px"></div>';
+}
+// Best and lowest period, taken from last.tbl (same rows as the chart and export table: Days, Weeks, or Months)
+function drawBW() {
+  const box = $('bwBox'); if (!box) return;
+  const t = typeof last !== 'undefined' && last && last.tbl;
+  if (!t || !t.length) { box.innerHTML = 'No daily sales data available.'; return; }
+  const best = t.reduce((a, r) => r.c.net > a.c.net ? r : a), low = t.reduce((a, r) => r.c.net < a.c.net ? r : a),
+    unit = { d: 'Day', w: 'Week', m: 'Month' }[$('grp').value] || 'Day',
+    cell = (title, r) => `<div style="flex:1;min-width:160px"><small>${title}</small><div><b>${esc(r.label)}</b> · ${P(r.c.net)}</div></div>`;
+  box.innerHTML = '<div style="display:flex;gap:16px;flex-wrap:wrap">' + cell('Best Sales ' + unit, best) + cell('Lowest Sales ' + unit, low) + '</div>';
 }
 function drawOX() {
   const rows = Object.entries(last.opexByCat || {}).sort((a, b) => b[1] - a[1]), total = rows.reduce((t, [, v]) => t + v, 0);
@@ -620,7 +630,7 @@ function drawReport() {
   const keys = new Map(), d = new Date(from); while (d < to) { keys.set(bkey(d, g)); d.setDate(d.getDate() + 1); }
   const tbl = [...keys.keys()].map(k => ({ k, label: blab(k, g), c: addc(calc(groups.get(k) || []), hcalc(hg.get(k) || [])) }));
   $('chTitle').textContent = MET[met]; $('chart').innerHTML = chart(tbl.map(r => ({ label: r.label, v: r.c[met] })));
-  const f = v => v.toFixed(2); last.tbl = tbl;
+  const f = v => v.toFixed(2); last.tbl = tbl; drawBW();
   $('brk').innerHTML = '<table><tr><th>Date</th><th>Gross sales</th><th>Refunds</th><th>Discounts</th><th>Net sales</th><th>Gross profit</th></tr>' + [...tbl].reverse().map(r =>
     `<tr><td>${r.label}</td><td>${P(r.c.gross)}</td><td>${P(r.c.refunds)}</td><td>${P(r.c.disc)}</td><td>${P(r.c.net)}</td><td>${P(r.c.profit)}</td></tr>`).join('') + '</table>';
   const top = {}; ok.forEach(s => s.sale_items.forEach(l => { const k = l.item_name + ' ' + (l.size || ''); top[k] = (top[k] || 0) + l.qty; }));
