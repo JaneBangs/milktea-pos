@@ -40,7 +40,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
 <div id="app" hidden>
   <header><button id="menu">☰</button><b style="flex:1">Milktea POS</b></header>
   <div id="scrim" hidden></div><div id="picker" hidden></div>
-  <nav id="drawer"><button id="tSell">Sell</button><button id="tOrders">Orders</button><button id="tRcpt">Receipts</button><button id="tShift">Shift</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="tInv">Inventory</button><button id="logout">Log out</button></nav>
+  <nav id="drawer"><button id="tSell">Sell</button><button id="tOrders">Orders</button><button id="tRcpt">Receipts</button><button id="tShift">Shift</button><button id="tExp">Expenses</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="tInv">Inventory</button><button id="logout">Log out</button></nav>
   <div id="sell" class="wrap">
     <div><div class="grid" id="grid"></div><div class="pages" id="tabs"></div></div>
     <div class="card">
@@ -74,6 +74,11 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <div id="brk" style="overflow-x:auto;max-height:320px"></div>
     <h3>Sales by hour</h3><div id="hours"></div><h3>Top items</h3><div id="top"></div>
     <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
+  </div>
+  <div id="expenses" class="card" style="margin:12px" hidden>
+    <div class="tabs"><input id="xFrom" type="date"><input id="xTo" type="date"><select id="xCat"></select><select id="xPay"></select><button class="pri" id="xGo">Show</button></div>
+    <div class="tabs"><button id="xMonth">This month</button><button id="xLast">Last month</button><button id="xYear">This year</button><button class="pri" id="xAdd" style="margin-left:auto">+ Add expense</button></div>
+    <div id="xForm"></div><div id="xSum" class="row big"></div><div id="xList" style="overflow-x:auto"></div>
   </div>
   <div id="receipts" class="card" style="margin:12px" hidden><div id="rcptBody"></div></div>
   <div id="shift" class="card" style="margin:12px" hidden><div id="shiftBody" style="max-width:560px"></div></div>
@@ -141,7 +146,7 @@ $('loginBtn').onclick = async () => {
   error ? $('loginErr').textContent = error.message : start();
 };
 $('logout').onclick = async () => { await db.auth.signOut(); location.reload(); };
-const show = v => ['sell', 'report', 'items', 'orders', 'inv', 'receipts', 'shift'].forEach(x => $(x).hidden = x !== v);
+const show = v => ['sell', 'report', 'items', 'orders', 'inv', 'receipts', 'shift', 'expenses'].forEach(x => $(x).hidden = x !== v);
 $('tSell').onclick = () => show('sell');
 $('tInv').onclick = () => { show('inv'); loadInv(); };
 $('tRcpt').onclick = () => { show('receipts'); loadReceipts(); };
@@ -556,9 +561,10 @@ const calc = rows => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 
   o.profit = o.net - o.cost; return o; };
 async function loadReport() {
   const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
-  const pf = new Date(+from - (to - from)), [rows, prev, hist, hprev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from)]);
+  const pf = new Date(+from - (to - from)), [rows, prev, hist, hprev, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to), fetchExp(pf, from)]);
   if (!rows || !prev) return;
-  last = { rows, hist, from, to, cur: addc(calc(rows), hcalc(hist)), prev: addc(calc(prev), hcalc(hprev)), days: Math.round((to - from) / 864e5) }; drawReport();
+  const cur = addc(calc(rows), hcalc(hist)), prv = addc(calc(prev), hcalc(hprev));
+  last = { rows, hist, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev) }; drawReport();
 }
 const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
 const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
@@ -671,6 +677,15 @@ $('discSel').onchange = () => { discSel = discounts.find(d => d.id == $('discSel
 const hcalc = hs => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 0, orders: 0 };
   hs.forEach(h => { o.gross += +h.gross; o.refunds += +h.refunds; o.disc += +h.discounts; o.net += +h.net; o.cost += +h.cost; }); o.profit = o.net - o.cost; return o; };
 const addc = (a, b) => { const o = {}; for (const k in a) o[k] = a[k] + b[k]; return o; };
+// Inventory purchases are not operating expenses: ingredients and packaging become stock and reach COGS when sold.
+const INV_EXP_CATS = ['Ingredients / Raw Materials', 'Packaging'];
+async function fetchExp(from, to) {
+  if ($('tod').value !== '0-24') return 0;
+  const r = await db.from('expenses').select('category, amount').gte('expense_date', day(from)).lt('expense_date', day(to));
+  if (r.error) { console.warn(r.error.message); return 0; }
+  return r.data.filter(e => !INV_EXP_CATS.includes(e.category)).reduce((t, e) => t + +e.amount, 0);
+}
+const plCalc = (c, opex) => ({ net_sales: c.net, cogs: c.cost, gross_profit: c.net - c.cost, operating_expenses: opex, net_profit: c.net - c.cost - opex });
 async function fetchHist(from, to) {
   if ($('tod').value !== '0-24') return [];
   const r = await db.from('history_days').select('*').gte('day', day(from)).lt('day', day(to)); return r.error ? [] : r.data;
@@ -726,6 +741,49 @@ function drawCats() {
 $('cAdd').onclick = async () => { const nm = $('cNew').value.trim(); if (!nm) return;
   if (allCats().some(c => c.toLowerCase() === nm.toLowerCase())) return alert('That category already exists.');
   const r = await db.from('categories').upsert({ name: nm }, { onConflict: 'name', ignoreDuplicates: true }); if (r.error) return alert(r.error.message); $('cNew').value = ''; loadCats(); };
+const EXP_CATS = ['Ingredients / Raw Materials', 'Packaging', 'Supplies', 'Equipment', 'Equipment Maintenance', 'Rent / Space Rental', 'Utilities', 'Transportation / Delivery', 'Marketing / Advertising', 'Labor / Wages', 'Event / Bazaar Fees', 'Business Permits / Fees', 'Bank / Payment Fees', 'Other'];
+const PAY_METHODS = ['Cash', 'GCash', 'Bank transfer', 'Card', 'Other'];
+const opt = (list, sel, all) => (all ? `<option value="">${all}</option>` : '') + list.map(x => `<option${x === sel ? ' selected' : ''}>${esc(x)}</option>`).join('');
+let expEdit = null;
+const xRange = (a, b) => { $('xFrom').value = day(a); $('xTo').value = day(b); loadExp(); };
+$('xMonth').onclick = () => { const n = new Date(); xRange(new Date(n.getFullYear(), n.getMonth(), 1), n); };
+$('xLast').onclick = () => { const n = new Date(); xRange(new Date(n.getFullYear(), n.getMonth() - 1, 1), new Date(n.getFullYear(), n.getMonth(), 0)); };
+$('xYear').onclick = () => { const n = new Date(); xRange(new Date(n.getFullYear(), 0, 1), n); };
+$('xGo').onclick = loadExp; $('xCat').onchange = loadExp; $('xPay').onchange = loadExp; $('xAdd').onclick = () => xOpen({});
+$('tExp').onclick = () => { show('expenses');
+  if (!$('xFrom').value) { $('xCat').innerHTML = opt(EXP_CATS, '', 'All categories'); $('xPay').innerHTML = opt(PAY_METHODS, '', 'All payment methods'); $('xMonth').onclick(); } else loadExp(); };
+function xOpen(e) {
+  expEdit = e.id || null;
+  $('xForm').innerHTML = `<div class="card" style="border:1px solid #ddd;margin:8px 0"><h3 style="margin-top:0">${e.id ? 'Edit' : 'New'} expense</h3><div style="display:grid;gap:8px;max-width:420px">
+    <input id="e_date" type="date" value="${e.expense_date || day(new Date())}"><input id="e_name" placeholder="Expense name / description" value="${esc(e.name || '')}">
+    <select id="e_cat">${opt(EXP_CATS, e.category)}</select><input id="e_amt" type="number" min="0" step="any" placeholder="Amount (₱)" value="${e.amount ?? ''}">
+    <select id="e_pay">${opt(PAY_METHODS, e.payment_method || 'Cash')}</select>
+    <input id="e_vendor" list="e_vlist" placeholder="Supplier / vendor (optional)" value="${esc(e.vendor || '')}"><datalist id="e_vlist">${sups.map(s => `<option value="${esc(s.name)}">`).join('')}</datalist>
+    <input id="e_ref" placeholder="Receipt / reference no. (optional)" value="${esc(e.reference_no || '')}">
+    <textarea id="e_notes" rows="2" placeholder="Notes" style="padding:10px;border-radius:8px;border:1px solid #ccc;font:inherit">${esc(e.notes || '')}</textarea>
+    <div class="tabs"><button class="pri" id="e_save">Save</button><button id="e_cancel">Cancel</button></div></div></div>`;
+  $('e_cancel').onclick = () => $('xForm').innerHTML = '';
+  $('e_save').onclick = async () => {
+    const row = { expense_date: $('e_date').value, name: $('e_name').value.trim(), category: $('e_cat').value, amount: parseFloat($('e_amt').value), payment_method: $('e_pay').value,
+      vendor: $('e_vendor').value.trim() || null, reference_no: $('e_ref').value.trim() || null, notes: $('e_notes').value.trim() || null };
+    if (!row.expense_date || !row.name || !(row.amount > 0)) return alert('Please enter the date, a name, and an amount.');
+    const r = expEdit ? await db.from('expenses').update(row).eq('id', expEdit) : await db.from('expenses').insert(row);
+    if (r.error) return alert(r.error.message); $('xForm').innerHTML = ''; loadExp();
+  };
+  $('e_name').focus();
+}
+async function loadExp() {
+  let q = db.from('expenses').select('*').gte('expense_date', $('xFrom').value).lte('expense_date', $('xTo').value).order('expense_date', { ascending: false }).order('id', { ascending: false });
+  if ($('xCat').value) q = q.eq('category', $('xCat').value); if ($('xPay').value) q = q.eq('payment_method', $('xPay').value);
+  const r = await q; if (r.error) return alert(r.error.message); const rows = r.data;
+  $('xSum').innerHTML = `<span>Total expenses (${rows.length})</span><span>${P(rows.reduce((t, e) => t + +e.amount, 0))}</span>`;
+  $('xList').innerHTML = rows.length ? '<table><tr><th>Date</th><th>Expense</th><th>Category</th><th>Paid by</th><th>Amount</th><th></th></tr>' + rows.map(e =>
+    `<tr><td>${e.expense_date}</td><td>${esc(e.name)}<br><small>${esc([e.vendor, e.reference_no && '#' + e.reference_no, e.notes].filter(Boolean).join(' · '))}</small></td><td>${esc(e.category)}</td><td>${esc(e.payment_method)}</td><td>${P(e.amount)}</td>
+    <td style="white-space:nowrap"><button data-xe="${e.id}">Edit</button> <button data-xd="${e.id}">Delete</button></td></tr>`).join('') + '</table>' : 'No expenses in this range.';
+  $('xList').querySelectorAll('[data-xe]').forEach(b => b.onclick = () => xOpen(rows.find(e => e.id == b.dataset.xe)));
+  $('xList').querySelectorAll('[data-xd]').forEach(b => b.onclick = async () => { if (!confirm('Delete this expense?')) return;
+    const r = await db.from('expenses').delete().eq('id', b.dataset.xd); if (r.error) return alert(r.error.message); loadExp(); });
+}
 const closeMenu = () => { $('drawer').classList.remove('open'); $('scrim').hidden = true; };
 $('menu').onclick = () => { $('drawer').classList.add('open'); $('scrim').hidden = false; };
 $('scrim').onclick = closeMenu; $('drawer').querySelectorAll('button').forEach(b => b.addEventListener('click', closeMenu));
