@@ -271,10 +271,13 @@ function wireEdit(table, fs) {
   if (!$('eSave')) return;
   $('eCancel').onclick = () => { edit = null; renderInv(); };
   $('eSave').onclick = async () => {
+    const btn = $('eSave'), cur = edit; if (!cur || btn.disabled) return;
     const o = readForm(fs); if (!o.name) return alert('Please enter a name.');
     if (table === 'ingredients' && !(o.pack_size > 0)) return alert('Amount in one pack must be more than 0.');
-    const r = edit.id ? await db.from(table).update(o).eq('id', edit.id) : await db.from(table).insert(o);
-    if (r.error) return alert(r.error.message); edit = null; await loadInv(); if (table === 'ingredients') recalcCosts();
+    btn.disabled = true;
+    const r = cur.id ? await db.from(table).update(o).eq('id', cur.id) : await db.from(table).insert(o);
+    if (r.error) { btn.disabled = false; return alert(r.error.message); }
+    edit = null; await loadInv(); if (table === 'ingredients') recalcCosts();
   };
 }
 async function loadInv() {
