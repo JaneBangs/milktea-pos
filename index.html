@@ -68,6 +68,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
       <div class="tabs" style="margin-top:8px;align-items:center"><input id="hFiles" type="file" accept=".csv" multiple><label>Only import days before <input id="hCut" type="date"></label></div>
       <div id="hPrev" style="margin:8px 0"></div><button class="pri" id="hGo" hidden>Import</button></details>
     <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div>
+    <div id="plBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
     <div class="tabs" style="align-items:center"><b id="chTitle" style="flex:1"></b><select id="grp"><option value="d">Days</option><option value="w">Weeks</option><option value="m">Months</option></select></div>
     <div id="chart"></div>
     <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button></div>
@@ -577,8 +578,19 @@ function chart(pts) {
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${grid}<polygon points="${x(0)},${y(0)} ${line} ${x(n - 1)},${y(0)}" fill="#8b5e3c22"/><polyline points="${line}" fill="none" stroke="#8b5e3c" stroke-width="2"/>`
     + pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="3" fill="#fff" stroke="#8b5e3c"><title>${p.label}: ${P(p.v)}</title></circle>${i % step ? '' : `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="#777">${p.label}</text>`}`).join('') + '</svg>';
 }
+function drawPL() {
+  const a = last.pl, b = last.plPrev, ps = new Date(+last.from - (last.to - last.from)), pe = new Date(+last.from - 864e5), end = new Date(+last.to - 864e5);
+  const dl = (x, y) => x === y ? x : x + ' to ' + y;
+  const row = (label, k, bold) => { const d = a[k] - b[k]; return `<tr${bold ? ' style="font-weight:700"' : ''}><td>${label}</td><td>${P(a[k])}</td><td>${P(b[k])}</td><td>${d >= 0 ? '+' : '-'}${P(Math.abs(d))}</td></tr>`; };
+  $('plBox').innerHTML = '<b>Profit &amp; Loss</b>'
+    + (a.partial ? '<div style="background:#fff4d6;padding:8px;border-radius:8px;margin:6px 0">A time-of-day filter is on, so this P&amp;L is partial: operating expenses are not included and imported history is left out. Choose "All day" for the full picture.</div>' : '')
+    + `<div style="overflow-x:auto"><table><tr><th></th><th>${dl(day(last.from), day(end))}</th><th>Previous: ${dl(day(ps), day(pe))}</th><th>Change</th></tr>`
+    + row('Net sales', 'net_sales') + row('Less: COGS', 'cogs') + row('Gross profit', 'gross_profit', 1)
+    + row('Less: Operating expenses' + (a.partial ? ' (not included)' : ''), 'operating_expenses') + row('Net profit' + (a.partial ? ' (partial)' : ''), 'net_profit', 1) + '</table></div>';
+}
 function drawReport() {
   const { rows, hist, from, to, cur, prev, days } = last, g = $('grp').value, ok = rows.filter(s => !s.voided);
+  drawPL();
   $('stats').innerHTML = Object.keys(MET).map(k => { const d = cur[k] - prev[k], pct = prev[k] ? d / Math.abs(prev[k]) * 100 : null,
     col = k === 'refunds' || k === 'disc' ? '#777' : d >= 0 ? '#2a8a2a' : '#c33';
     return `<div class="card" data-m="${k}" style="cursor:pointer;${k === met ? 'border-bottom:3px solid #8b5e3c' : ''}"><small>${MET[k]}</small><div class="big">${P(cur[k])}</div>
