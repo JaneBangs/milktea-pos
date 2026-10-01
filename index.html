@@ -120,7 +120,9 @@ const SUPABASE_KEY = 'sb_publishable_HTjl8cMVMroXfriN9T65gg_kepy8Lb_';
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
-const P = n => '₱' + Number(n || 0).toFixed(2);
+const fmt = (v, d) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: 2 });
+const P = n => '₱' + fmt(n, 2);
+const N = v => fmt(v, 0);
 const day = d => d.toLocaleDateString('en-CA');
 let items = [], cat = 'All', cart = {}, custom = {}, cur = null, openOrders = [];
 const pr = i => custom[i.id] ?? i.price;
@@ -261,7 +263,7 @@ async function loadInv() {
   pos = e.data; incoming = {}; pos.forEach(p => p.purchase_lines.forEach(l => { const g = ings.find(i => i.id == l.ingredient_id); if (g) incoming[g.id] = (incoming[g.id] || 0) + l.packs * g.pack_size; })); c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
   const low = ings.filter(i => i.low_stock > 0 && (stockMap[i.id] || 0) <= i.low_stock);
   $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory'; $('menu').textContent = low.length ? '☰ ●' : '☰';
-  $('lowBanner').innerHTML = low.length ? `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>Time to restock:</b> ${low.map(i => esc(i.name) + ' (' + +(stockMap[i.id] || 0).toFixed(2) + ' ' + i.unit + ' left)').join(', ')}</div>` : '';
+  $('lowBanner').innerHTML = low.length ? `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>Time to restock:</b> ${low.map(i => esc(i.name) + ' (' + N(stockMap[i.id] || 0) + ' ' + i.unit + ' left)').join(', ')}</div>` : '';
   if (!$('inv').hidden) renderInv();
 }
 $('inv').querySelectorAll('[data-t]').forEach(b => b.onclick = () => { invTab = b.dataset.t; edit = null; renderInv(); });
@@ -314,8 +316,8 @@ async function renderInv() {
   if (invTab === 'stock') {
     b.innerHTML = (edit ? editBox('ingredient', ingF()) : '<button class="pri" id="addIng">+ Add ingredient</button>') + '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Incoming</th><th>Warn at</th><th>Pack</th><th>Supplier</th><th></th></tr>' +
       ings.map(i => { const s = stockMap[i.id] || 0, low = i.low_stock > 0 && s <= i.low_stock;
-        return `<tr style="${low ? 'background:#fde8e8' : ''}"><td>${esc(i.name)}<br><small>${i.category}</small></td><td>${+s.toFixed(2)} ${i.unit}</td><td>${incoming[i.id] ? '+' + +incoming[i.id].toFixed(2) + ' ' + i.unit : '—'}</td><td>${i.low_stock || '—'}</td>
-        <td>${i.pack_size} ${i.unit} @ ${P(i.pack_price)}</td><td>${esc((sups.find(x => x.id == i.supplier_id) || {}).name || '')}</td>
+        return `<tr style="${low ? 'background:#fde8e8' : ''}"><td>${esc(i.name)}<br><small>${i.category}</small></td><td>${N(s)} ${i.unit}</td><td>${incoming[i.id] ? '+' + N(incoming[i.id]) + ' ' + i.unit : '—'}</td><td>${i.low_stock ? N(i.low_stock) : '—'}</td>
+        <td>${N(i.pack_size)} ${i.unit} @ ${P(i.pack_price)}</td><td>${esc((sups.find(x => x.id == i.supplier_id) || {}).name || '')}</td>
         <td style="white-space:nowrap"><button data-ie="${i.id}">Edit</button> <button data-ic="${i.id}">Count</button> <button data-ix="${i.id}">Delete</button></td></tr>`; }).join('') + '</table></div>';
     if ($('addIng')) $('addIng').onclick = () => { edit = { id: null, v: { category: 'Ingredient', unit: 'g' } }; renderInv(); };
     b.querySelectorAll('[data-ie]').forEach(x => x.onclick = () => { edit = { id: x.dataset.ie, v: ings.find(i => i.id == x.dataset.ie) }; renderInv(); });
@@ -345,7 +347,7 @@ async function renderInv() {
     const r = await db.from('stock_moves').select('*, ingredients(name, unit)').order('created_at', { ascending: false }).limit(200);
     if (r.error) return alert(r.error.message);
     b.innerHTML = '<div style="overflow-x:auto"><table><tr><th>Date</th><th>Ingredient</th><th>Reason</th><th>Change</th></tr>' + r.data.map(m => `<tr><td>${new Date(m.created_at).toLocaleString()}</td><td>${esc(m.ingredients.name)}</td>
-      <td>${esc(m.reason)}<br><small>${esc(m.note)}</small></td><td>${m.delta > 0 ? '+' : ''}${+(+m.delta).toFixed(2)} ${m.ingredients.unit}</td></tr>`).join('') + '</table></div>';
+      <td>${esc(m.reason)}<br><small>${esc(m.note)}</small></td><td>${m.delta > 0 ? '+' : ''}${N(m.delta)} ${m.ingredients.unit}</td></tr>`).join('') + '</table></div>';
   } else if (invTab === 'rec') recipeView(); else if (invTab === 'po') poView(); else if (invTab === 'val') valView(); else buyView();
 }
 async function receivePO(pid, sid, lines) {
@@ -369,21 +371,21 @@ function valView() {
   let total = 0; const cats = {};
   ings.forEach(i => { const st = Math.max(0, stockMap[i.id] || 0), u = i.pack_size ? i.pack_price / i.pack_size : 0; (cats[i.category] = cats[i.category] || []).push({ i, st, u, v: st * u }); total += st * u; });
   $('invBody').innerHTML = '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Cost per unit</th><th>Value</th></tr>' + Object.entries(cats).map(([c, rs]) =>
-    `<tr><td colspan="3"><b>${esc(c)}</b></td><td><b>${P(rs.reduce((t, r) => t + r.v, 0))}</b></td></tr>` + rs.map(r => `<tr><td>${esc(r.i.name)}</td><td>${+r.st.toFixed(2)} ${r.i.unit}</td><td>₱${r.u.toFixed(4)}</td><td>${P(r.v)}</td></tr>`).join('')).join('')
+    `<tr><td colspan="3"><b>${esc(c)}</b></td><td><b>${P(rs.reduce((t, r) => t + r.v, 0))}</b></td></tr>` + rs.map(r => `<tr><td>${esc(r.i.name)}</td><td>${N(r.st)} ${r.i.unit}</td><td>₱${r.u.toFixed(4)}</td><td>${P(r.v)}</td></tr>`).join('')).join('')
     + `</table></div><div class="row big"><span>Total stock value</span><span>${P(total)}</span></div><small>Stock is valued at each ingredient's current price.</small>`;
 }
 function buyView() {
   if (!ings.length) return $('invBody').innerHTML = 'Add your ingredients in the Stock tab first.';
   $('invBody').innerHTML = `<div style="display:grid;gap:8px;max-width:560px"><select id="b_sup"><option value="">Select a supplier</option>${sups.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
     <input id="b_date" type="date" value="${day(new Date())}"><input id="b_notes" placeholder="Notes"><label>Expected on (optional) <input id="b_exp" type="date"></label>
-    <div class="tabs"><select id="b_ing">${ings.map(i => `<option value="${i.id}">${esc(i.name)} (${+(stockMap[i.id] || 0).toFixed(1)} ${i.unit} in stock)</option>`).join('')}</select>
+    <div class="tabs"><select id="b_ing">${ings.map(i => `<option value="${i.id}">${esc(i.name)} (${N(stockMap[i.id] || 0)} ${i.unit} in stock)</option>`).join('')}</select>
     <input id="b_packs" type="number" min="0" step="any" placeholder="Packs" style="width:90px"><input id="b_price" type="number" min="0" step="any" placeholder="₱ per pack" style="width:110px"><button id="b_add">Add</button><button id="b_auto">Autofill low stock</button></div>
     <div id="b_lines"></div><input id="b_extra" type="number" min="0" step="any" placeholder="Additional costs, e.g. delivery (₱)"><div class="row big"><span>Total</span><span id="b_total"></span></div>
     <div class="tabs"><button id="b_ord">Save as ordered</button><button class="pri" id="b_go">Receive now</button></div></div>`;
   const fillPrice = () => $('b_price').value = ings.find(i => i.id == $('b_ing').value).pack_price || '';
   const lines = () => { const sub = buyLines.reduce((t, l) => t + l.packs * l.price, 0);
     $('b_lines').innerHTML = '<table>' + buyLines.map((l, n) => { const i = ings.find(x => x.id == l.id);
-      return `<tr><td>${esc(i.name)}</td><td>${l.packs} pack × ${P(l.price)}<br><small>= ${+(l.packs * i.pack_size).toFixed(2)} ${i.unit}</small></td><td>${P(l.packs * l.price)}</td><td><button data-rm="${n}">✕</button></td></tr>`; }).join('') + '</table>';
+      return `<tr><td>${esc(i.name)}</td><td>${l.packs} pack × ${P(l.price)}<br><small>= ${N(l.packs * i.pack_size)} ${i.unit}</small></td><td>${P(l.packs * l.price)}</td><td><button data-rm="${n}">✕</button></td></tr>`; }).join('') + '</table>';
     $('b_total').textContent = P(sub + num($('b_extra').value));
     $('b_lines').querySelectorAll('[data-rm]').forEach(x => x.onclick = () => { buyLines.splice(x.dataset.rm, 1); lines(); }); };
   $('b_ing').onchange = fillPrice; $('b_extra').oninput = lines; fillPrice(); lines();
