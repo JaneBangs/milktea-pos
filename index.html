@@ -567,7 +567,7 @@ async function loadReport() {
   const oxCat = {}, pf = new Date(+from - (to - from)), [rows, prev, hist, hprev, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to, oxCat), fetchExp(pf, from)]);
   if (!rows || !prev) return;
   const cur = addc(calc(rows), hcalc(hist)), prv = addc(calc(prev), hcalc(hprev));
-  last = { rows, hist, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; last.health = calcHealth(last.pl); drawReport();
+  last = { rows, hist, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; last.health = calcHealth(last.pl, last.days); drawReport();
 }
 const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
 const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
@@ -593,7 +593,7 @@ function drawPL() {
 function drawHealth() {
   const h = (typeof last !== 'undefined' && last && last.health) || {}, pc = v => (Number(v) || 0).toFixed(1) + '%',
     box = (label, v) => `<div class="card"><small>${label}</small><div class="big">${pc(v)}</div></div>`;
-  $('healthBox').innerHTML = '<b>Business Health</b><div class="stats">' + box('Gross Margin', h.gross_margin) + box('COGS %', h.cogs_pct) + box('Operating Expense %', h.opex_pct) + box('Net Margin', h.net_margin)
+  $('healthBox').innerHTML = '<b>Business Health</b><div class="stats">' + box('Gross Margin', h.gross_margin) + box('COGS %', h.cogs_pct) + box('Operating Expense %', h.opex_pct) + box('Net Margin', h.net_margin) + `<div class="card"><small>Avg Daily Net Sales</small><div class="big">${P(h.avg_daily_sales)}</div></div>`
     + '</div><small style="color:#777">Net margin is based on recorded operating expenses.</small>';
 }
 function drawOX() {
@@ -717,8 +717,8 @@ async function fetchExp(from, to, byCat) {
 }
 const plCalc = (c, opex) => ({ net_sales: c.net, cogs: c.cost, gross_profit: c.net - c.cost, operating_expenses: opex, net_profit: c.net - c.cost - opex });
 // Business Health KPIs, derived only from the P&L values (percent of net sales; 0 when there are no net sales)
-const calcHealth = p => { const pct = v => p.net_sales > 0 ? v / p.net_sales * 100 : 0;
-  return { gross_margin: pct(p.gross_profit), cogs_pct: pct(p.cogs), opex_pct: pct(p.operating_expenses), net_margin: pct(p.net_profit) }; };
+const calcHealth = (p, days) => { const pct = v => p.net_sales > 0 ? v / p.net_sales * 100 : 0;
+  return { gross_margin: pct(p.gross_profit), cogs_pct: pct(p.cogs), opex_pct: pct(p.operating_expenses), net_margin: pct(p.net_profit), avg_daily_sales: days > 0 ? p.net_sales / days : 0 }; };
 async function fetchHist(from, to) {
   if ($('tod').value !== '0-24') return [];
   const r = await db.from('history_days').select('*').gte('day', day(from)).lt('day', day(to)); return r.error ? [] : r.data;
