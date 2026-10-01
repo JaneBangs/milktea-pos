@@ -29,6 +29,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
 .pages button{border:0;border-radius:0;background:none;padding:14px 16px;white-space:nowrap}.pages .on{background:none;color:#8b5e3c;border-bottom:3px solid #8b5e3c}
 #picker{position:fixed;inset:0;background:#0007;z-index:40;display:flex;align-items:center;justify-content:center}
 #picker>div{background:#fff;border-radius:12px;padding:16px;min-width:260px;display:grid;gap:8px}
+.tile.dark .cap{color:#fff}.tile.dark .cap small{color:#ddd}
 </style></head><body>
 <div id="login" hidden>
   <h2>Milktea POS</h2>
@@ -88,6 +89,9 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
   <div id="items" class="card" style="margin:12px" hidden>
     <div class="tabs"><button class="pri" id="addItem">+ Add item</button>
       <label style="align-self:center"><input type="checkbox" id="showHidden"> Show hidden items</label></div>
+    <details style="margin:8px 0"><summary><b>Categories</b> (the page tabs on the sales screen)</summary>
+      <div id="catList" style="margin:8px 0"></div>
+      <div class="tabs"><input id="cNew" placeholder="New category name"><button class="pri" id="cAdd">Add category</button></div></details>
     <details style="margin:8px 0"><summary><b>Discounts</b> (saved discounts for the sales screen)</summary>
       <div id="discList" style="margin:8px 0"></div>
       <div class="tabs"><input id="dName" placeholder="Name, e.g. Senior / PWD"><select id="dKind"><option value="percent">Percent (%)</option><option value="amount">Amount (₱)</option></select>
@@ -98,6 +102,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
       <div style="display:grid;gap:8px;max-width:520px">
         <input id="fName" placeholder="Name" style="font-size:1.2em">
         <div class="tabs" style="align-items:center"><img id="fImg" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px;background:#eee"><input id="fPhoto" type="file" accept="image/*"><button type="button" id="fPhotoDel">Remove photo</button></div>
+        <div class="tabs" style="align-items:center"><label>Tile color <input id="fColor" type="color" value="#e8dccf" style="padding:2px;height:38px;width:60px"></label><label><input type="checkbox" id="fAuto" checked> Automatic color</label></div>
         <select id="fCat"></select><input id="fCatNew" placeholder="New category name" hidden>
         <input id="fSize" placeholder="Size / variant, e.g. 16oz (optional)">
         <textarea id="fDesc" placeholder="Description" rows="2" style="padding:10px;border-radius:8px;border:1px solid #ccc;font:inherit"></textarea>
@@ -142,7 +147,7 @@ $('tInv').onclick = () => { show('inv'); loadInv(); };
 $('tRcpt').onclick = () => { show('receipts'); loadReceipts(); };
 $('tShift').onclick = () => { show('shift'); loadShift(); };
 $('tRep').onclick = () => { show('report'); loadReport(); };
-$('tItems').onclick = () => { show('items'); renderItems(); };
+$('tItems').onclick = () => { show('items'); loadCats(); };
 $('tOrders').onclick = () => { show('orders'); loadOrders(); };
 
 async function start() {
@@ -160,15 +165,23 @@ async function loadItems() {
   renderTabs(); renderGrid(); renderCart();
 }
 function renderItems() {
+  drawCats();
   const rows = allItems.filter(i => i.active || $('showHidden').checked)
     .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name) || a.id - b.id);
   $('itemList').innerHTML = '<table><tr><th>Item</th><th>Size</th><th>Category</th><th>Price</th><th>Cost</th><th></th></tr>' +
     rows.map(i => `<tr style="${i.active ? '' : 'opacity:.5'}"><td>${esc(i.name)}</td><td>${esc(i.size)}</td><td>${esc(i.category)}</td>
     <td>${i.price == null ? 'Ask' : P(i.price)}</td><td>${i.cogs == null ? '—' : P(i.cogs)}</td>
-    <td style="white-space:nowrap"><button data-e="${i.id}">Edit</button> <button data-s="${i.id}">+ Size</button></td></tr>`).join('') + '</table>';
+    <td style="white-space:nowrap"><button data-e="${i.id}">Edit</button> <button data-s="${i.id}">+ Size</button> <button data-d="${i.id}">Delete</button></td></tr>`).join('') + '</table>';
   $('itemList').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openEditor(allItems.find(i => i.id == b.dataset.e)));
   $('itemList').querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
-    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category, image_url: i.image_url, copyFrom: i.id }); });
+    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category, image_url: i.image_url, color: i.color, copyFrom: i.id }); });
+  $('itemList').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => {
+    const i = allItems.find(x => x.id == b.dataset.d);
+    if (!confirm(`Delete ${i.name} ${i.size || ''}? If it already has sales, it will be hidden instead so your sales history stays correct.`)) return;
+    let r = await db.from('items').delete().eq('id', i.id);
+    if (r.error) { r = await db.from('items').update({ active: false }).eq('id', i.id); if (r.error) return alert(r.error.message);
+      alert('This item has sales history, so it was hidden instead of deleted. Tick "Show hidden items" to see it.'); }
+    await loadItems(); renderItems(); loadInv(); });
 }
 let fLines = [], fImgUrl = null;
 const showImg = () => { $('fImg').src = fImgUrl || ''; $('fImg').style.visibility = fImgUrl ? 'visible' : 'hidden'; };
@@ -187,13 +200,13 @@ $('fPhotoDel').onclick = () => { fImgUrl = null; $('fPhoto').value = ''; showImg
 function openEditor(i) {
   editId = i.id || null; $('edTitle').textContent = editId ? 'Edit item' : 'New item';
   $('fName').value = i.name || ''; $('fSize').value = i.size || ''; $('fDesc').value = i.description || '';
-  const cats = [...new Set(allItems.map(x => x.category))].sort();
+  const cats = allCats();
   $('fCat').innerHTML = cats.map(c => `<option value="${esc(c)}"${c === i.category ? ' selected' : ''}>${esc(c)}</option>`).join('') + '<option value="__new">+ New category…</option>';
   if (!cats.length) $('fCat').value = '__new'; $('fCatNew').value = ''; $('fCatNew').hidden = $('fCat').value !== '__new';
   $('fPrice').value = i.price ?? ''; $('fCogs').value = i.cogs ?? ''; $('fActive').checked = i.active !== false;
   document.querySelectorAll('[name=fSold]').forEach(r => r.checked = r.value === (i.sold_by || 'each'));
   $('fSku').value = i.sku || String(Math.max(10000, ...allItems.map(x => parseInt(x.sku) || 0)) + 1); $('fBar').value = i.barcode || '';
-  fImgUrl = i.image_url || null; showImg();
+  fImgUrl = i.image_url || null; showImg(); $('fColor').value = i.color || '#e8dccf'; $('fAuto').checked = !i.color;
   fLines = (recipes[i.id || i.copyFrom] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawF();
   $('editor').hidden = false; $('fName').focus();
 }
@@ -213,13 +226,14 @@ function drawF() {
 }
 $('addItem').onclick = () => openEditor({});
 $('fCancel').onclick = () => $('editor').hidden = true;
+$('fColor').oninput = () => $('fAuto').checked = false;
 $('fCat').onchange = () => $('fCatNew').hidden = $('fCat').value !== '__new';
 $('showHidden').onchange = renderItems;
 $('fSave').onclick = async () => {
   const cat = $('fCat').value === '__new' ? $('fCatNew').value.trim() : $('fCat').value, lines = fLines.filter(l => l.qty > 0), price = $('fPrice').value.trim();
   const row = { name: $('fName').value.trim(), size: $('fSize').value.trim() || null, category: cat, description: $('fDesc').value.trim() || null,
     price: price === '' ? null : parseFloat(price), active: $('fActive').checked, sold_by: document.querySelector('[name=fSold]:checked').value,
-    sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null, image_url: fImgUrl,
+    sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null, image_url: fImgUrl, color: $('fAuto').checked ? null : $('fColor').value,
     cogs: lines.length ? Math.round(cupCost(lines) * 100) / 100 : ($('fCogs').value === '' ? null : parseFloat($('fCogs').value)) };
   if (!row.name || !row.category || (row.price !== null && isNaN(row.price))) return alert('Please fill in the name and category, and check the price.');
   let r = editId ? await db.from('items').update(row).eq('id', editId).select().single() : await db.from('items').insert(row).select().single();
@@ -431,7 +445,9 @@ function renderGrid() {
   groups.forEach(vs => {
     const v0 = vs[0], img = (vs.find(v => v.image_url) || {}).image_url, ps = vs.filter(v => v.price != null).map(v => +v.price), b = document.createElement('button');
     b.className = 'tile' + (img ? '' : ' nophoto');
-    b.style.backgroundColor = `hsl(${[...v0.category].reduce((h, c) => h + c.charCodeAt(0), 0) * 37 % 360} 45% 88%)`;
+    const col = (vs.find(v => v.color) || {}).color;
+    b.style.backgroundColor = col || `hsl(${[...v0.category].reduce((h, c) => h + c.charCodeAt(0), 0) * 37 % 360} 45% 88%)`;
+    if (col && ((n => 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255))(parseInt(col.slice(1), 16)) < 140)) b.classList.add('dark');
     if (img) b.style.backgroundImage = 'url("' + img + '")';
     b.innerHTML = `<div class="cap">${esc(v0.name)}<small>${vs.length > 1 ? vs.map(v => esc(v.size)).join(' / ') : esc(v0.size)} · ${ps.length ? (vs.length > 1 ? 'from ' : '') + P(Math.min(...ps)) : 'Ask price'}</small></div>`;
     b.onclick = () => vs.length === 1 ? tap(v0) : pick(vs); $('grid').appendChild(b);
@@ -692,6 +708,24 @@ $('hGo').onclick = async () => {
   for (let i = 0; i < hUse.length; i += 200) { const r = await db.from('history_days').upsert(hUse.slice(i, i + 200)); if (r.error) return alert(r.error.message); }
   alert('History imported.'); $('hFiles').value = ''; hRows = []; hUse = []; $('hGo').hidden = true; $('hPrev').textContent = ''; loadReport();
 };
+let catRows = [];
+const allCats = () => [...new Set([...allItems.map(x => x.category), ...catRows])].sort((a, b) => a.localeCompare(b));
+async function loadCats() { const r = await db.from('categories').select('name'); catRows = r.error ? [] : r.data.map(x => x.name); renderItems(); }
+function drawCats() {
+  const n = c => allItems.filter(i => i.category === c).length, cs = allCats();
+  $('catList').innerHTML = cs.length ? '<table>' + cs.map(c => `<tr><td>${esc(c)}</td><td>${n(c)} item${n(c) === 1 ? '' : 's'}</td><td style="white-space:nowrap"><button data-cr="${esc(c)}">Rename</button> <button data-cd="${esc(c)}">Delete</button></td></tr>`).join('') + '</table>' : '<small>No categories yet.</small>';
+  $('catList').querySelectorAll('[data-cr]').forEach(b => b.onclick = async () => {
+    const old = b.dataset.cr, nn = (prompt('New name for "' + old + '"?', old) || '').trim(); if (!nn || nn === old) return;
+    let r = await db.from('items').update({ category: nn }).eq('category', old); if (r.error) return alert(r.error.message);
+    await db.from('categories').delete().eq('name', old); await db.from('categories').upsert({ name: nn }, { onConflict: 'name', ignoreDuplicates: true });
+    cat = 'All'; await loadItems(); loadCats(); });
+  $('catList').querySelectorAll('[data-cd]').forEach(b => b.onclick = async () => {
+    const c = b.dataset.cd; if (n(c)) return alert('"' + c + '" still has ' + n(c) + ' item(s). Move or delete those items first, or rename the category instead.');
+    if (!confirm('Delete category "' + c + '"?')) return; const r = await db.from('categories').delete().eq('name', c); if (r.error) return alert(r.error.message); loadCats(); });
+}
+$('cAdd').onclick = async () => { const nm = $('cNew').value.trim(); if (!nm) return;
+  if (allCats().some(c => c.toLowerCase() === nm.toLowerCase())) return alert('That category already exists.');
+  const r = await db.from('categories').upsert({ name: nm }, { onConflict: 'name', ignoreDuplicates: true }); if (r.error) return alert(r.error.message); $('cNew').value = ''; loadCats(); };
 const closeMenu = () => { $('drawer').classList.remove('open'); $('scrim').hidden = true; };
 $('menu').onclick = () => { $('drawer').classList.add('open'); $('scrim').hidden = false; };
 $('scrim').onclick = closeMenu; $('drawer').querySelectorAll('button').forEach(b => b.addEventListener('click', closeMenu));
