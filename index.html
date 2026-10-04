@@ -558,7 +558,9 @@ async function loadOrders() {
     if (!confirm('Cancel this unpaid order?')) return;
     const o = openOrders.find(s => s.id == b.dataset.x); const se = await adjustStock(o.id, o.sale_items, [], 'order cancelled');
     if (se) return alert('Could not return the stock, so the order was NOT cancelled: ' + se.message);
-    await db.from('sales').update({ voided: true }).eq('id', b.dataset.x); loadInv(); loadOrders(); });
+    const r = await db.from('sales').update({ voided: true }).eq('id', b.dataset.x).select('id');
+    if (r.error || r.data.length !== 1) alert(`The stock for Order #${o.id} was returned, but the order could NOT be marked cancelled${r.error ? ': ' + r.error.message : ''}.\nDo not press Cancel again (it would return the stock twice). Check Inventory > History and fix the stock with Count.`);
+    loadInv(); loadOrders(); });
 }
 function openOrder(s) {
   cart = {}; custom = {};
