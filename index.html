@@ -842,7 +842,8 @@ $('hFiles').onchange = async () => {
   hRows = [...map.values()].sort((a, b) => a.day < b.day ? -1 : 1); hPreview(bad);
 };
 async function hPreview(bad) {
-  if (!$('hCut').value) { const r = await db.from('sales').select('paid_at').eq('status', 'paid').order('paid_at').limit(1);
+  if (!$('hCut').value) { const r = await db.from('sales').select('paid_at').eq('status', 'paid').eq('voided', false).order('paid_at', { ascending: true }).limit(1);
+    if (r.error) { hUse = []; $('hGo').hidden = true; $('hPrev').innerHTML = `<b>⚠ Could not find your first live sale, so no cutoff was set: ${esc(r.error.message)}</b><br>Enter the "Only import days before" date yourself, or try again.`; return; }
     $('hCut').value = r.data && r.data[0] ? day(new Date(r.data[0].paid_at)) : day(new Date(Date.now() + 864e5)); }
   hUse = hRows.filter(r => r.day < $('hCut').value); const sm = k => hUse.reduce((t, r) => t + r[k], 0);
   $('hPrev').innerHTML = (hRows.length ? `<b>${hUse.length} days</b> will be imported (${hUse.length ? hUse[0].day + ' to ' + hUse[hUse.length - 1].day : 'none'}); ${hRows.length - hUse.length} later days are skipped.<br>Net sales ${P(sm('net'))} · cost ${P(sm('cost'))} · profit ${P(sm('net') - sm('cost'))}` : 'No sales days found in those files.')
