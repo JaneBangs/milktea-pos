@@ -245,6 +245,7 @@ $('fSave').onclick = async () => {
     sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null, image_url: fImgUrl, color: $('fAuto').checked ? null : $('fColor').value,
     cogs: lines.length ? Math.round(cupCost(lines) * 100) / 100 : ($('fCogs').value === '' ? null : parseFloat($('fCogs').value)) };
   if (!row.name || !row.category || (row.price !== null && isNaN(row.price))) return alert('Please fill in the name and category, and check the price.');
+  if (lines.length && !(await invReady())) return;
   let r = editId ? await db.from('items').update(row).eq('id', editId).select().single() : await db.from('items').insert(row).select().single();
   if (r.error) return alert(r.error.message);
   const id = r.data.id;
@@ -254,7 +255,7 @@ $('fSave').onclick = async () => {
   }
   $('editor').hidden = true; await loadInv(); await loadItems(); renderItems();
 };
-let ings = [], sups = [], recipes = {}, pos = [], rcv = [], voiding = false, incoming = {}, stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
+let ings = [], sups = [], recipes = {}, invOk = false, pos = [], rcv = [], voiding = false, incoming = {}, stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
 const num = v => parseFloat(v) || 0;
 const ingF = () => [{ k: 'name', l: 'Ingredient name' }, { k: 'category', opts: [['Ingredient', 'Ingredient'], ['Packaging', 'Packaging']] },
   { k: 'unit', opts: [['g', 'Grams (g)'], ['ml', 'Milliliters (ml)'], ['pcs', 'Pieces (pcs)']] },
@@ -284,8 +285,11 @@ function wireEdit(table, fs) {
 async function loadInv() {
   const [a, b, c, d, e] = await Promise.all([db.from('ingredients').select('*').eq('active', true).order('category').order('name'),
     db.from('suppliers').select('*').order('name'), db.from('ingredient_stock').select('*'), db.from('recipe_lines').select('*'), db.from('purchases').select('*, purchase_lines(*)').in('status', ['ordered', 'received']).order('id')]);
-  const err = a.error || b.error || c.error || d.error || e.error; if (err) return console.warn(err.message);
-  ings = a.data; sups = b.data; stockMap = {}; recipes = {}; d.data.forEach(r => (recipes[r.item_id] = recipes[r.item_id] || []).push(r));
+  const err = a.error || b.error || c.error || d.error || e.error;
+  if (err) { invOk = false; console.warn(err.message); $('invBody').innerHTML = '';
+    $('lowBanner').innerHTML = `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>⚠ Inventory and recipes could not be loaded:</b> ${esc(err.message)}<br>Sales, recipe costs and stock changes are paused until this loads. Check your connection and reload the page.</div>`;
+    return alert('Inventory and recipes could not be loaded: ' + err.message + '\nSales and stock changes are paused until this loads.'); }
+  invOk = true; ings = a.data; sups = b.data; stockMap = {}; recipes = {}; d.data.forEach(r => (recipes[r.item_id] = recipes[r.item_id] || []).push(r));
   pos = e.data.filter(p => p.status === 'ordered'); rcv = e.data.filter(p => p.status === 'received').reverse(); incoming = {}; pos.forEach(p => p.purchase_lines.forEach(l => { const g = ings.find(i => i.id == l.ingredient_id); if (g) incoming[g.id] = (incoming[g.id] || 0) + l.packs * g.pack_size; })); c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
   const low = ings.filter(i => i.low_stock > 0 && (stockMap[i.id] || 0) <= i.low_stock);
   $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory'; $('menu').textContent = low.length ? '☰ ●' : '☰';
@@ -293,6 +297,8 @@ async function loadInv() {
   if (!$('inv').hidden) renderInv();
 }
 $('inv').querySelectorAll('[data-t]').forEach(b => b.onclick = () => { invTab = b.dataset.t; edit = null; renderInv(); });
+// Inventory-dependent actions need loaded ingredients and recipes: try loading once more, otherwise refuse
+async function invReady() { if (!invOk) await loadInv(); if (!invOk) alert('Not saved: inventory and recipes are not loaded, so stock and costs cannot be calculated.'); return invOk; }
 const use = (g, q) => g.brew_g_per_l > 0 ? q * g.brew_g_per_l / 1000 : q;
 const cupCost = rl => rl.reduce((t, r) => { const g = ings.find(i => i.id == r.ingredient_id); return g ? t + use(g, r.qty) * g.pack_price / g.pack_size : t; }, 0);
 const usage = ls => { const a = {}; ls.forEach(l => (recipes[l.item_id] || []).forEach(r => { const g = ings.find(i => i.id == r.ingredient_id); if (g) a[g.id] = (a[g.id] || 0) + use(g, r.qty) * l.qty; })); return a; };
@@ -303,6 +309,7 @@ async function adjustStock(oid, oldL, newL, reason) {
   if (m.length) return (await db.from('stock_moves').insert(m)).error; // null when it worked
 }
 async function recalcCosts() {
+  if (!invOk) return; // loadInv already showed the error; never write costs from unloaded recipes
   for (const it of allItems) { const rl = recipes[it.id]; if (!rl || !rl.length) continue;
     const c = Math.round(cupCost(rl) * 100) / 100;
     if (it.cogs == null || Math.abs(+it.cogs - c) > 0.004) await db.from('items').update({ cogs: c }).eq('id', it.id); }
@@ -515,6 +522,7 @@ const fail = e => { alert(e.message); return null; };
 const stockFail = (id, e) => { if (e) alert(`Order #${id} was saved, but its stock was NOT updated: ${e.message}\nCheck Inventory > History and fix the stock with Count.`); };
 async function persist(status) {
   if (!Object.keys(cart).length) { alert('The order is empty.'); return null; }
+  if (!(await invReady())) return null;
   const t = totals(), cash = +$('cash').value || 0, pay = $('pay').value, paid = status === 'paid', cashPay = paid && pay === 'cash';
   if (cashPay && cash < t.total) { alert('Cash received is less than the total.'); return null; }
   const base = { subtotal: t.sub, discount: t.disc, total: t.total, status, dining_option: $('dine').value,
@@ -555,7 +563,7 @@ async function loadOrders() {
     <td style="white-space:nowrap"><button class="pri" data-o="${s.id}">Open / Pay</button> <button data-x="${s.id}">Cancel</button></td></tr>`).join('') + '</table>' : 'No unpaid orders.';
   $('openList').querySelectorAll('[data-o]').forEach(b => b.onclick = () => openOrder(openOrders.find(s => s.id == b.dataset.o)));
   $('openList').querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
-    if (!confirm('Cancel this unpaid order?')) return;
+    if (!confirm('Cancel this unpaid order?') || !(await invReady())) return;
     const o = openOrders.find(s => s.id == b.dataset.x); const se = await adjustStock(o.id, o.sale_items, [], 'order cancelled');
     if (se) return alert('Could not return the stock, so the order was NOT cancelled: ' + se.message);
     const r = await db.from('sales').update({ voided: true }).eq('id', b.dataset.x).select('id');
