@@ -300,7 +300,7 @@ async function adjustStock(oid, oldL, newL, reason) {
   const a = usage(newL), o = usage(oldL), m = [];
   new Set([...Object.keys(a), ...Object.keys(o)]).forEach(id => { const d = (o[id] || 0) - (a[id] || 0);
     if (Math.abs(d) > 1e-9) m.push({ ingredient_id: id, delta: d, reason, note: 'Order #' + oid }); });
-  if (m.length) await db.from('stock_moves').insert(m);
+  if (m.length) return (await db.from('stock_moves').insert(m)).error; // null when it worked
 }
 async function recalcCosts() {
   for (const it of allItems) { const rl = recipes[it.id]; if (!rl || !rl.length) continue;
@@ -511,6 +511,8 @@ $('pay').onchange = () => $('refRow').hidden = $('pay').value === 'cash';
 const PAY_LABEL = { cash: 'Cash', gcash: 'GCash', bank: 'Bank Transfer' }, payLabel = t => PAY_LABEL[t] || t || '';
 $('clear').onclick = () => { cart = {}; custom = {}; cur = null; discSel = null; $('discSel').value = ''; $('disc').disabled = false; $('disc').value = ''; $('cash').value = ''; $('payRef').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
 const fail = e => { alert(e.message); return null; };
+// The order is already saved at this point, so only warn (returning null would let Charge create a duplicate sale)
+const stockFail = (id, e) => { if (e) alert(`Order #${id} was saved, but its stock was NOT updated: ${e.message}\nCheck Inventory > History and fix the stock with Count.`); };
 async function persist(status) {
   if (!Object.keys(cart).length) { alert('The order is empty.'); return null; }
   const t = totals(), cash = +$('cash').value || 0, pay = $('pay').value, paid = status === 'paid', cashPay = paid && pay === 'cash';
@@ -526,14 +528,14 @@ async function persist(status) {
     r = await db.from('sale_items').delete().eq('sale_id', id); if (r.error) return fail(r.error);
     r = await db.from('sale_items').insert(lines(id)); if (r.error) return fail(r.error);
     r = await db.from('sales').update(base).eq('id', id); if (r.error) return fail(r.error);
-    await adjustStock(id, old, lines(id), 'order edited');
+    stockFail(id, await adjustStock(id, old, lines(id), 'order edited'));
   } else {
     r = await db.from('sales').insert(base).select().single(); if (r.error) return fail(r.error);
     id = r.data.id;
     r = await db.from('sale_items').insert(lines(id));
     if (r.error) { await db.from('sales').update({ voided: true }).eq('id', id); return fail(r.error); }
   }
-  if (!cur) await adjustStock(id, [], lines(id), 'sold');
+  if (!cur) stockFail(id, await adjustStock(id, [], lines(id), 'sold'));
   loadInv();
   return { id, t, cash, pay };
 }
@@ -554,7 +556,8 @@ async function loadOrders() {
   $('openList').querySelectorAll('[data-o]').forEach(b => b.onclick = () => openOrder(openOrders.find(s => s.id == b.dataset.o)));
   $('openList').querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
     if (!confirm('Cancel this unpaid order?')) return;
-    const o = openOrders.find(s => s.id == b.dataset.x); await adjustStock(o.id, o.sale_items, [], 'order cancelled');
+    const o = openOrders.find(s => s.id == b.dataset.x); const se = await adjustStock(o.id, o.sale_items, [], 'order cancelled');
+    if (se) return alert('Could not return the stock, so the order was NOT cancelled: ' + se.message);
     await db.from('sales').update({ voided: true }).eq('id', b.dataset.x); loadInv(); loadOrders(); });
 }
 function openOrder(s) {
