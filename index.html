@@ -68,7 +68,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <details style="margin:8px 0"><summary><b>Import Loyverse history</b> (daily Sales summary CSV files)</summary>
       <div class="tabs" style="margin-top:8px;align-items:center"><input id="hFiles" type="file" accept=".csv" multiple><label>Only import days before <input id="hCut" type="date"></label></div>
       <div id="hPrev" style="margin:8px 0"></div><button class="pri" id="hGo" hidden>Import</button></details>
-    <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div>
+    <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div><div id="srcBox"></div>
     <div id="plBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
     <div id="healthBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
     <div id="oxBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
@@ -650,6 +650,13 @@ function drawOX() {
     + (rows.length ? rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${P(v)}</td></tr>`).join('') : '<tr><td colspan="2"><small>No operating expenses recorded for this period.</small></td></tr>')
     + `<tr style="font-weight:700"><td>Total operating expenses</td><td>${P(total)}</td></tr></table></div>`;
 }
+// Source transparency: how much of the period is imported history vs live POS, and days that are in both (display only)
+function srcNote(rows, hist) {
+  if (!hist.length) return '';
+  const h = hcalc(hist), l = calc(rows), live = new Set(rows.map(s => day(new Date(s.paid_at)))), both = hist.map(x => x.day).filter(d => live.has(d)).sort();
+  return `<div style="color:#777;margin-bottom:8px">Imported Loyverse history: ${hist.length} day${hist.length > 1 ? 's' : ''}, Net ${P(h.net)}, COGS ${P(h.cost)}<br>Live POS: Net ${P(l.net)}, COGS ${P(l.cost)}</div>`
+    + (both.length ? `<div style="background:#fff4d6;padding:8px;border-radius:8px;margin-bottom:8px">⚠ These days are in both imported history and live sales, so they are counted twice: ${both.join(', ')}</div>` : '');
+}
 function drawReport() {
   const { rows, hist, from, to, cur, prev, days } = last, g = $('grp').value, ok = rows.filter(s => !s.voided);
   drawPL(); drawHealth(); drawOX();
@@ -659,6 +666,7 @@ function drawReport() {
       <small style="color:${col}">${d >= 0 ? '+' : '-'}${P(Math.abs(d))}${pct === null ? '' : ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`}</small></div>`; }).join('');
   $('stats').querySelectorAll('[data-m]').forEach(x => x.onclick = () => { met = x.dataset.m; drawReport(); });
   $('cmp').textContent = `${cur.orders} orders · compared with the previous ${days} day${days > 1 ? 's' : ''} · profit counts only items with a cost`;
+  $('srcBox').innerHTML = srcNote(rows, hist);
   const groups = new Map(); rows.forEach(s => { const k = bkey(new Date(s.paid_at), g); (groups.get(k) || groups.set(k, []).get(k)).push(s); });
   const hg = new Map(); hist.forEach(h => { const k = bkey(new Date(h.day + 'T00:00:00'), g); (hg.get(k) || hg.set(k, []).get(k)).push(h); });
   const keys = new Map(), d = new Date(from); while (d < to) { keys.set(bkey(d, g)); d.setDate(d.getDate() + 1); }
