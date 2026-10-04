@@ -240,12 +240,15 @@ $('fCat').onchange = () => $('fCatNew').hidden = $('fCat').value !== '__new';
 $('showHidden').onchange = renderItems;
 $('fSave').onclick = async () => {
   const cat = $('fCat').value === '__new' ? $('fCatNew').value.trim() : $('fCat').value, lines = fLines.filter(l => l.qty > 0), price = $('fPrice').value.trim();
+  // A recipe cost needs loaded ingredients; a missing ingredient would silently cost ₱0, so block instead
+  if (lines.length && !(await invReady())) return;
+  const miss = lines.filter(l => !ings.find(i => i.id == l.ingredient_id));
+  if (miss.length) return alert(`Not saved: this recipe uses ${miss.length} ingredient${miss.length > 1 ? 's' : ''} that ${miss.length > 1 ? 'are' : 'is'} missing or hidden (ingredient #${miss.map(l => l.ingredient_id).join(', #')}).\nRemove that recipe line or restore the ingredient in Inventory, then save again.`);
   const row = { name: $('fName').value.trim(), size: $('fSize').value.trim() || null, category: cat, description: $('fDesc').value.trim() || null,
     price: price === '' ? null : parseFloat(price), active: $('fActive').checked, sold_by: document.querySelector('[name=fSold]:checked').value,
     sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null, image_url: fImgUrl, color: $('fAuto').checked ? null : $('fColor').value,
     cogs: lines.length ? Math.round(cupCost(lines) * 100) / 100 : ($('fCogs').value === '' ? null : parseFloat($('fCogs').value)) };
   if (!row.name || !row.category || (row.price !== null && isNaN(row.price))) return alert('Please fill in the name and category, and check the price.');
-  if (lines.length && !(await invReady())) return;
   let r = editId ? await db.from('items').update(row).eq('id', editId).select().single() : await db.from('items').insert(row).select().single();
   if (r.error) return alert(r.error.message);
   const id = r.data.id;
