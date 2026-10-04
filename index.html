@@ -74,7 +74,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <div id="oxBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
     <div class="tabs" style="align-items:center"><b id="chTitle" style="flex:1"></b><select id="grp"><option value="d">Days</option><option value="w">Weeks</option><option value="m">Months</option></select></div>
     <div id="chart"></div>
-    <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button><button id="csvD">Download Sales Detail CSV</button><button id="csvX">Download Expense Detail CSV</button><button id="csvP">Download Purchase Detail CSV</button></div>
+    <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button><button id="csvD">Download Sales Detail CSV</button><button id="csvX">Download Expense Detail CSV</button><button id="csvP">Download Purchase Detail CSV</button><button id="csvM">Download Stock Movement CSV</button></div>
     <div id="brk" style="overflow-x:auto;max-height:320px"></div>
     <h3>Sales by hour</h3><div id="hours"></div><h3>Top items</h3><div id="top"></div>
     <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
@@ -698,6 +698,22 @@ $('csvP').onclick = async () => { const f = $('from').value, t = $('to').value;
   const r = await db.from('purchases').select('*, suppliers(name), purchase_lines(packs, pack_price, ingredients(name, pack_size))').gte('purchase_date', f).lte('purchase_date', t).order('purchase_date', { ascending: false }).order('id', { ascending: false });
   if (r.error) return alert(r.error.message);
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + purCSV(r.data)], { type: 'text/csv' })); a.download = `purchase-detail-${f}-to-${t}.csv`; a.click(); };
+// Stock movements: every stock_moves row whose created_at falls in the Report's dates (paged, 1000 rows per request)
+const moveCSV = rows => ['Move ID,Date/Time,Ingredient,Unit,Change,Reason,Note', ...rows.map(m => { const d = new Date(m.created_at), g = m.ingredients || {}, v = +(+m.delta).toFixed(4);
+  return [m.id, day(d) + ' ' + d.toTimeString().slice(0, 5), g.name, g.unit, (v > 0 ? '+' : '') + v, m.reason, m.note].map(cq).join(','); })].join('\n');
+async function fetchMoves(f, t) {
+  const from = new Date(f + 'T00:00:00'), to = new Date(t + 'T00:00:00'); to.setDate(to.getDate() + 1);
+  let rows = [], p = 0;
+  while (true) {
+    const { data, error } = await db.from('stock_moves').select('id, created_at, delta, reason, note, ingredients(name, unit)').gte('created_at', from.toISOString())
+      .lt('created_at', to.toISOString()).order('created_at', { ascending: false }).order('id', { ascending: false }).range(p * 1000, p * 1000 + 999);
+    if (error) { alert(error.message); return null; }
+    rows = rows.concat(data); if (data.length < 1000) break; p++;
+  }
+  return rows;
+}
+$('csvM').onclick = async () => { const f = $('from').value, t = $('to').value, rows = await fetchMoves(f, t); if (!rows) return;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + moveCSV(rows)], { type: 'text/csv' })); a.download = `stock-movement-${f}-to-${t}.csv`; a.click(); };
 let rcpts = [], rSel = null;
 async function loadReceipts() {
   const r = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').order('paid_at', { ascending: false }).limit(300);
