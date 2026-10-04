@@ -74,7 +74,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <div id="oxBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
     <div class="tabs" style="align-items:center"><b id="chTitle" style="flex:1"></b><select id="grp"><option value="d">Days</option><option value="w">Weeks</option><option value="m">Months</option></select></div>
     <div id="chart"></div>
-    <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button><button id="csvD">Download Sales Detail CSV</button><button id="csvX">Download Expense Detail CSV</button></div>
+    <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button><button id="csvD">Download Sales Detail CSV</button><button id="csvX">Download Expense Detail CSV</button><button id="csvP">Download Purchase Detail CSV</button></div>
     <div id="brk" style="overflow-x:auto;max-height:320px"></div>
     <h3>Sales by hour</h3><div id="hours"></div><h3>Top items</h3><div id="top"></div>
     <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
@@ -689,6 +689,15 @@ $('csvX').onclick = async () => { const f = $('from').value, t = $('to').value;
   const r = await db.from('expenses').select('*').gte('expense_date', f).lte('expense_date', t).order('expense_date', { ascending: false }).order('id', { ascending: false });
   if (r.error) return alert(r.error.message);
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + expCSV(r.data)], { type: 'text/csv' })); a.download = `expense-detail-${f}-to-${t}.csv`; a.click(); };
+// Purchase detail: one row per purchase line, every status, by purchase_date in the Report's range. Pack size is the ingredient's current one.
+const purCSV = rows => ['Purchase ID,Purchase Date,Supplier,Status,Ingredient,Packs,Pack Size,Pack Price,Line Total,Extra Costs,Purchase Total,Notes',
+  ...rows.flatMap(p => (p.purchase_lines.length ? p.purchase_lines : [null]).map(l => [p.id, p.purchase_date, (p.suppliers || {}).name, p.status,
+    ...(l ? [(l.ingredients || {}).name, +l.packs, l.ingredients ? +l.ingredients.pack_size : '', (+l.pack_price).toFixed(2), (l.packs * l.pack_price).toFixed(2)] : ['', '', '', '', '']),
+    (+p.extra_costs).toFixed(2), (+p.total).toFixed(2), p.notes].map(cq).join(',')))].join('\n');
+$('csvP').onclick = async () => { const f = $('from').value, t = $('to').value;
+  const r = await db.from('purchases').select('*, suppliers(name), purchase_lines(packs, pack_price, ingredients(name, pack_size))').gte('purchase_date', f).lte('purchase_date', t).order('purchase_date', { ascending: false }).order('id', { ascending: false });
+  if (r.error) return alert(r.error.message);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + purCSV(r.data)], { type: 'text/csv' })); a.download = `purchase-detail-${f}-to-${t}.csv`; a.click(); };
 let rcpts = [], rSel = null;
 async function loadReceipts() {
   const r = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').order('paid_at', { ascending: false }).limit(300);
