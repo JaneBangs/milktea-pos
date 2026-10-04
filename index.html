@@ -598,11 +598,13 @@ const calc = rows => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 
   o.profit = o.net - o.cost; return o; };
 async function loadReport() {
   const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
-  const oxCat = {}, pf = new Date(+from - (to - from)), [rows, prev, histAll, hprevAll, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to, oxCat), fetchExp(pf, from)]);
+  const oxCat = {}, pf = new Date(+from - (to - from)), [rows, prev, hr, hpr, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to, oxCat), fetchExp(pf, from)]);
   if (!rows || !prev) return;
+  // fetchHist returns { error } when the query fails; the report still shows live sales but is flagged incomplete
+  const histErr = hr.error || hpr.error || null, histAll = hr.error ? [] : hr, hprevAll = hpr.error ? [] : hpr;
   const hist = liveFirst(histAll, rows), hprev = liveFirst(hprevAll, prev);
   const cur = addc(calc(rows), hcalc(hist)), prv = addc(calc(prev), hcalc(hprev));
-  last = { rows, hist, histAll, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; last.health = calcHealth(last.pl, last.days); drawReport();
+  last = { rows, hist, histAll, histErr, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; last.health = calcHealth(last.pl, last.days); drawReport();
 }
 const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
 const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
@@ -669,7 +671,7 @@ function drawReport() {
       <small style="color:${col}">${d >= 0 ? '+' : '-'}${P(Math.abs(d))}${pct === null ? '' : ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`}</small></div>`; }).join('');
   $('stats').querySelectorAll('[data-m]').forEach(x => x.onclick = () => { met = x.dataset.m; drawReport(); });
   $('cmp').textContent = `${cur.orders} orders · compared with the previous ${days} day${days > 1 ? 's' : ''} · profit counts only items with a cost`;
-  $('srcBox').innerHTML = srcNote(rows, last.histAll);
+  $('srcBox').innerHTML = (last.histErr ? `<div style="background:#fff4d6;padding:8px;border-radius:8px;margin-bottom:8px">⚠ Imported Loyverse history could not be loaded. Report totals may be incomplete. <small>(${esc(last.histErr.message)})</small></div>` : '') + srcNote(rows, last.histAll);
   const groups = new Map(); rows.forEach(s => { const k = bkey(new Date(s.paid_at), g); (groups.get(k) || groups.set(k, []).get(k)).push(s); });
   const hg = new Map(); hist.forEach(h => { const k = bkey(new Date(h.day + 'T00:00:00'), g); (hg.get(k) || hg.set(k, []).get(k)).push(h); });
   const keys = new Map(), d = new Date(from); while (d < to) { keys.set(bkey(d, g)); d.setDate(d.getDate() + 1); }
@@ -818,7 +820,7 @@ const calcHealth = (p, days) => { const pct = v => p.net_sales > 0 ? v / p.net_s
   return { gross_margin: pct(p.gross_profit), cogs_pct: pct(p.cogs), opex_pct: pct(p.operating_expenses), net_margin: pct(p.net_profit), avg_daily_sales: days > 0 ? p.net_sales / days : 0 }; };
 async function fetchHist(from, to) {
   if ($('tod').value !== '0-24') return [];
-  const r = await db.from('history_days').select('*').gte('day', day(from)).lt('day', day(to)); return r.error ? [] : r.data;
+  const r = await db.from('history_days').select('*').gte('day', day(from)).lt('day', day(to)); return r.error ? { error: r.error } : r.data;
 }
 let hRows = [], hUse = [];
 const parseCSV = t => { const out = []; let row = [], f = '', q = false;
