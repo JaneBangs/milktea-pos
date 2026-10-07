@@ -551,7 +551,12 @@ async function persist(status) {
   return { id, t, cash, pay };
 }
 $('saveOrd').onclick = async () => { const r = await persist('open'); if (r) { alert('Order saved as unpaid.'); $('clear').onclick(); } };
-$('charge').onclick = async () => { const r = await persist('paid');
+$('charge').onclick = async () => {
+  // Money only goes into the drawer during a shift (new sales and paying unpaid orders alike)
+  const s = await db.from('shifts').select('id').is('closed_at', null).limit(1);
+  if (s.error) return alert('Could not check the shift: ' + s.error.message);
+  if (!s.data.length) return alert('No shift is open. Open a shift (☰ → Shift) before charging.');
+  const r = await persist('paid');
   if (r) { alert('Paid. Change: ' + P(r.pay === 'cash' ? r.cash - r.t.total : 0)); $('clear').onclick(); } };
 
 const ago = t => { const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + m % 60 + ' min'; };
