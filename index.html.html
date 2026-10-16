@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Milktea POS</title>
+<style>
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;font-family:system-ui,sans-serif;background:#f4f1ec;color:#222}
+button,input,select{font:inherit;padding:10px;border-radius:8px;border:1px solid #ccc}
+button{cursor:pointer;background:#fff}button.pri{background:#8b5e3c;color:#fff;border:0}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}
+header b{flex:1}#login{max-width:320px;margin:15vh auto;display:grid;gap:10px;padding:16px}
+.wrap{display:grid;grid-template-columns:1fr 340px;gap:12px;padding:12px}
+@media(max-width:800px){.wrap{grid-template-columns:1fr}}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}.tabs .on{background:#8b5e3c;color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.grid button{text-align:left;min-height:84px}.grid small{display:block;color:#777}
+.card{background:#fff;border-radius:10px;padding:12px}
+.line{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0}
+.row{display:flex;justify-content:space-between;padding:3px 0}.big{font-size:1.3em;font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:12px 0}
+table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid #eee;text-align:left}
+#drawer{position:fixed;top:0;bottom:0;left:0;width:230px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:4px;transform:translateX(-105%);transition:transform .2s;z-index:30;box-shadow:2px 0 12px #0003}
+#drawer.open{transform:none}#drawer button{text-align:left;border:0;background:none;padding:14px 10px}#drawer button:hover{background:#f4f1ec}
+#scrim{position:fixed;inset:0;background:#0006;z-index:20}
+.grid .tile{position:relative;padding:0;overflow:hidden;min-height:120px;background-size:cover;background-position:center}
+.tile .cap{position:absolute;left:0;right:0;bottom:0;background:#000a;color:#fff;padding:6px 8px;font-size:.9em}.tile .cap small{color:#ddd}
+.tile.nophoto .cap{background:none;color:#222;position:static;padding:10px}.tile.nophoto .cap small{color:#555}
+.pages{display:flex;gap:2px;overflow-x:auto;position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;margin-top:10px}
+.pages button{border:0;border-radius:0;background:none;padding:14px 16px;white-space:nowrap}.pages .on{background:none;color:#8b5e3c;border-bottom:3px solid #8b5e3c}
+#picker{position:fixed;inset:0;background:#0007;z-index:40;display:flex;align-items:center;justify-content:center}
+#picker>div{background:#fff;border-radius:12px;padding:16px;min-width:260px;display:grid;gap:8px}
+.tile.dark .cap{color:#fff}.tile.dark .cap small{color:#ddd}
+</style></head><body>
+<div id="login" hidden>
+  <h2>Milktea POS</h2>
+  <input id="email" type="email" placeholder="Email">
+  <input id="pass" type="password" placeholder="Password">
+  <button class="pri" id="loginBtn">Log in</button><div id="loginErr" style="color:#b00"></div>
+</div>
+<div id="app" hidden>
+  <header><button id="menu">☰</button><b style="flex:1">Milktea POS</b></header>
+  <div id="scrim" hidden></div><div id="picker" hidden></div>
+  <nav id="drawer"><button id="tSell">Sell</button><button id="tOrders">Orders</button><button id="tRcpt">Receipts</button><button id="tShift">Shift</button><button id="tExp">Expenses</button><button id="tRep">Report</button><button id="tItems">Items</button><button id="tInv">Inventory</button><button id="logout">Log out</button></nav>
+  <div id="sell" class="wrap">
+    <div><div class="grid" id="grid"></div><div class="pages" id="tabs"></div></div>
+    <div class="card">
+      <h3 style="margin-top:0" id="tkTitle">Current order</h3>
+      <select id="dine" style="width:100%"><option>Dine in</option><option>Takeout</option><option>Delivery</option></select>
+      <input id="cname" placeholder="Customer / table name (optional)" style="width:100%;margin-top:6px">
+      <div id="lines"></div><hr>
+      <div class="row"><span>Subtotal</span><span id="sub"></span></div>
+      <div class="row"><span>Discount</span><select id="discSel"><option value="">None / custom amount</option></select></div>
+      <div class="row"><span>Discount (₱)</span><input id="disc" type="number" min="0" style="width:100px"></div>
+      <div class="row big"><span>Total</span><span id="tot"></span></div>
+      <div class="row"><span>Payment</span><select id="pay"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank Transfer</option></select></div>
+      <div class="row" id="refRow" hidden><span>Reference No.</span><input id="payRef" placeholder="Optional" style="width:100px"></div>
+      <div class="row"><span>Cash received</span><input id="cash" type="number" min="0" style="width:100px"></div>
+      <div class="row"><span>Change</span><b id="chg">₱0.00</b></div>
+      <button id="saveOrd" style="width:100%;margin-top:8px">Save order (unpaid)</button><button class="pri" id="charge" style="width:100%;margin-top:6px">Charge</button>
+      <button id="clear" style="width:100%;margin-top:6px">Clear order</button>
+    </div>
+  </div>
+  <div id="report" class="card" style="margin:12px" hidden>
+    <div class="tabs"><button id="rPrev">‹</button><input id="from" type="date"><input id="to" type="date"><button id="rNext">›</button>
+      <select id="tod"><option value="0-24">All day</option><option value="6-12">Morning (6 AM–12 PM)</option><option value="12-18">Afternoon (12–6 PM)</option><option value="18-24">Evening (6 PM–12 AM)</option></select>
+      <button class="pri" id="go">Show</button></div>
+    <div class="tabs"><button id="rToday">Today</button><button id="r7">Last 7 days</button><button id="rMonth">This month</button><button id="rYear">This year</button></div>
+    <details style="margin:8px 0"><summary><b>Import Loyverse history</b> (daily Sales summary CSV files)</summary>
+      <div class="tabs" style="margin-top:8px;align-items:center"><input id="hFiles" type="file" accept=".csv" multiple><label>Only import days before <input id="hCut" type="date"></label></div>
+      <div id="hPrev" style="margin:8px 0"></div><button class="pri" id="hGo" hidden>Import</button></details>
+    <details style="margin:8px 0"><summary><b>Import Loyverse Receipts — Preview Only</b> (Receipt Log CSV)</summary>
+      <div class="tabs" style="margin-top:8px"><input id="rlFile" type="file" accept=".csv"></div>
+      <div id="rlPrev" style="margin:8px 0"></div></details>
+    <details style="margin:8px 0"><summary><b>Historical Receipt Entry</b> (type in one old receipt at a time)</summary>
+      <div style="background:#fff4d6;padding:8px;border-radius:8px;margin:8px 0">Saves to the historical receipts table only. It does not create live sales or change stock, costs, shifts or reports. Saved receipts <b>cannot be edited or deleted</b> from the app, so check before saving.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;max-width:900px">
+        <label>Receipt number *<br><input id="hrNo" placeholder="e.g. 1-1948" style="width:100%"></label>
+        <label>Sale date *<br><input id="hrDate" type="date" style="width:100%"></label>
+        <label>Sale time *<br><input id="hrTime" type="time" style="width:100%"></label>
+        <label>Receipt type<br><select id="hrType" style="width:100%"><option value="sale">Sale</option><option value="refund">Refund</option></select></label>
+        <label>Payment method<br><select id="hrPay" style="width:100%"><option value="">Not recorded</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option><option>Card</option><option>Other</option></select></label>
+        <label>Order type<br><input id="hrOrder" placeholder="e.g. Dine in" style="width:100%"></label>
+        <label>Employee<br><input id="hrEmp" style="width:100%"></label>
+        <label>POS name<br><input id="hrPos" placeholder="e.g. POS 1" style="width:100%"></label>
+      </div>
+      <p><small>Enter quantities and prices as <b>positive</b> numbers, exactly as printed on the receipt. For a refund receipt, choose Receipt type "Refund"; the amounts stay positive. Line totals are calculated as quantity × unit price.</small></p>
+      <p><small>Catalog item (optional): pick an item from the list to link the line to your menu. Only an exact pick links it; typed text stays unmatched. Picking fills only empty fields, so text from the printed receipt is kept.</small></p>
+      <datalist id="hrCatList"></datalist>
+      <div id="hrLines" style="overflow-x:auto"></div>
+      <button id="hrAdd" type="button">+ Add item</button>
+      <div class="row big" style="max-width:420px"><span>Sum of line totals</span><span id="hrSum">₱0.00</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,220px));gap:8px">
+        <label>Receipt total<br><input id="hrTotal" type="number" min="0" step="any" style="width:100%"></label>
+        <label>Amount tendered<br><input id="hrTendered" type="number" min="0" step="any" style="width:100%"></label>
+        <label>Change given<br><input id="hrChange" type="number" min="0" step="any" style="width:100%"></label>
+      </div>
+      <div id="hrCmp" style="margin-top:4px"></div>
+      <div id="hrMsg" style="margin:8px 0"></div>
+      <button class="pri" id="hrSave" type="button">Save historical receipt</button></details>
+    <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div><div id="srcBox"></div>
+    <div id="plBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
+    <div id="healthBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
+    <div id="oxBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
+    <div class="tabs" style="align-items:center"><b id="chTitle" style="flex:1"></b><select id="grp"><option value="d">Days</option><option value="w">Weeks</option><option value="m">Months</option></select></div>
+    <div id="chart"></div>
+    <div class="tabs" style="align-items:center;margin-top:12px"><b style="flex:1">Export</b><button id="csv">Download CSV</button><button id="csvD">Download Sales Detail CSV</button><button id="csvX">Download Expense Detail CSV</button><button id="csvP">Download Purchase Detail CSV</button><button id="csvM">Download Stock Movement CSV</button></div>
+    <div id="brk" style="overflow-x:auto;max-height:320px"></div>
+    <h3>Sales by hour</h3><div id="hours"></div><h3>Top items</h3><div id="top"></div>
+    <h3>Sales</h3><div id="list" style="overflow-x:auto"></div>
+  </div>
+  <div id="expenses" class="card" style="margin:12px" hidden>
+    <div class="tabs"><input id="xFrom" type="date"><input id="xTo" type="date"><select id="xCat"></select><select id="xPay"></select><button class="pri" id="xGo">Show</button></div>
+    <div class="tabs"><button id="xMonth">This month</button><button id="xLast">Last month</button><button id="xYear">This year</button><button class="pri" id="xAdd" style="margin-left:auto">+ Add expense</button></div>
+    <div id="xForm"></div><div id="xSum" class="row big"></div><div id="xList" style="overflow-x:auto"></div>
+  </div>
+  <div id="receipts" class="card" style="margin:12px" hidden><div id="rcptBody"></div></div>
+  <div id="shift" class="card" style="margin:12px" hidden><div id="shiftBody" style="max-width:560px"></div></div>
+  <div id="orders" class="card" style="margin:12px" hidden>
+    <h3 style="margin-top:0">Open (unpaid) orders</h3><div id="openList" style="overflow-x:auto"></div>
+    
+  </div>
+  <div id="inv" class="card" style="margin:12px" hidden>
+    <div id="lowBanner"></div>
+    <div class="tabs"><button data-t="stock">Stock</button><button data-t="buy">Buy stock</button><button data-t="po">Purchase orders</button><button data-t="val">Valuation</button><button data-t="sup">Suppliers</button><button data-t="rec">Recipes</button><button data-t="hist">History</button></div>
+    <div id="invBody"></div>
+  </div>
+  <div id="items" class="card" style="margin:12px" hidden>
+    <div class="tabs"><button class="pri" id="addItem">+ Add item</button>
+      <label style="align-self:center"><input type="checkbox" id="showHidden"> Show hidden items</label></div>
+    <details style="margin:8px 0"><summary><b>Categories</b> (the page tabs on the sales screen)</summary>
+      <div id="catList" style="margin:8px 0"></div>
+      <div class="tabs"><input id="cNew" placeholder="New category name"><button class="pri" id="cAdd">Add category</button></div></details>
+    <details style="margin:8px 0"><summary><b>Discounts</b> (saved discounts for the sales screen)</summary>
+      <div id="discList" style="margin:8px 0"></div>
+      <div class="tabs"><input id="dName" placeholder="Name, e.g. Senior / PWD"><select id="dKind"><option value="percent">Percent (%)</option><option value="amount">Amount (₱)</option></select>
+        <input id="dVal" type="number" min="0" step="any" placeholder="Value" style="width:90px"><button class="pri" id="dAdd">Add discount</button></div></details>
+    <div id="itemList" style="overflow-x:auto"></div>
+    <div id="editor" class="card" style="border:1px solid #ddd;margin-top:12px" hidden>
+      <h3 id="edTitle" style="margin-top:0"></h3>
+      <div style="display:grid;gap:8px;max-width:520px">
+        <input id="fName" placeholder="Name" style="font-size:1.2em">
+        <div class="tabs" style="align-items:center"><img id="fImg" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px;background:#eee"><input id="fPhoto" type="file" accept="image/*"><button type="button" id="fPhotoDel">Remove photo</button></div>
+        <div class="tabs" style="align-items:center"><label>Tile color <input id="fColor" type="color" value="#e8dccf" style="padding:2px;height:38px;width:60px"></label><label><input type="checkbox" id="fAuto" checked> Automatic color</label></div>
+        <select id="fCat"></select><input id="fCatNew" placeholder="New category name" hidden>
+        <input id="fSize" placeholder="Size / variant, e.g. 16oz (optional)">
+        <textarea id="fDesc" placeholder="Description" rows="2" style="padding:10px;border-radius:8px;border:1px solid #ccc;font:inherit"></textarea>
+        <label><input type="checkbox" id="fActive" checked> The item is available for sale</label>
+        <div>Sold by &nbsp;<label><input type="radio" name="fSold" value="each" checked> Each</label> &nbsp;<label><input type="radio" name="fSold" value="weight"> Weight/Volume</label></div>
+        <input id="fPrice" type="number" min="0" step="0.01" placeholder="Price"><small>To enter the price when selling, leave the field blank</small>
+        <input id="fCogs" type="number" min="0" step="0.01" placeholder="Cost"><small id="fCogsNote"></small>
+        <input id="fSku" placeholder="SKU"><input id="fBar" placeholder="Barcode">
+        <h4 style="margin:8px 0 0">Recipe (ingredients used per cup)</h4><div id="fRecipe"></div>
+        <div class="tabs"><button class="pri" id="fSave">Save</button><button id="fCancel">Cancel</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// PASTE YOUR SUPABASE DETAILS HERE (Project Settings > API)
+const SUPABASE_URL = 'https://tixkedgvdzritdqnwpsw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_HTjl8cMVMroXfriN9T65gg_kepy8Lb_';
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+const fmt = (v, d) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: 2 });
+const P = n => '₱' + fmt(n, 2);
+const N = v => fmt(v, 0);
+const day = d => d.toLocaleDateString('en-CA');
+let items = [], cat = 'All', cart = {}, custom = {}, cur = null, openOrders = [];
+const pr = i => custom[i.id] ?? i.price;
+
+(async () => {
+  const { data: { session } } = await db.auth.getSession();
+  session ? start() : ($('login').hidden = false);
+})();
+$('loginBtn').onclick = async () => {
+  const { error } = await db.auth.signInWithPassword({ email: $('email').value, password: $('pass').value });
+  error ? $('loginErr').textContent = error.message : start();
+};
+$('logout').onclick = async () => { await db.auth.signOut(); location.reload(); };
+const show = v => ['sell', 'report', 'items', 'orders', 'inv', 'receipts', 'shift', 'expenses'].forEach(x => $(x).hidden = x !== v);
+$('tSell').onclick = () => show('sell');
+$('tInv').onclick = () => { show('inv'); loadInv(); };
+$('tRcpt').onclick = () => { show('receipts'); loadReceipts(); };
+$('tShift').onclick = () => { show('shift'); loadShift(); };
+$('tRep').onclick = () => { show('report'); loadReport(); };
+$('tItems').onclick = () => { show('items'); loadCats(); };
+$('tOrders').onclick = () => { show('orders'); loadOrders(); };
+
+async function start() {
+  $('login').hidden = true; $('app').hidden = false;
+  await loadItems(); setRange(new Date(), new Date()); loadInv(); loadDiscounts();
+}
+let allItems = [], editId = null;
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+async function loadItems() {
+  const { data, error } = await db.from('items').select('*').order('id');
+  if (error) return alert(error.message);
+  allItems = data; items = data.filter(i => i.active);
+  if (cat !== 'All' && !items.some(i => i.category === cat)) cat = 'All';
+  Object.keys(cart).forEach(id => { if (!items.find(i => i.id == id)) delete cart[id]; });
+  renderTabs(); renderGrid(); renderCart();
+}
+function renderItems() {
+  drawCats();
+  const rows = allItems.filter(i => i.active || $('showHidden').checked)
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name) || a.id - b.id);
+  $('itemList').innerHTML = '<table><tr><th>Item</th><th>Size</th><th>Category</th><th>Price</th><th>Cost</th><th></th></tr>' +
+    rows.map(i => `<tr style="${i.active ? '' : 'opacity:.5'}"><td>${esc(i.name)}</td><td>${esc(i.size)}</td><td>${esc(i.category)}</td>
+    <td>${i.price == null ? 'Ask' : P(i.price)}</td><td>${i.cogs == null ? '—' : P(i.cogs)}</td>
+    <td style="white-space:nowrap"><button data-e="${i.id}">Edit</button> <button data-s="${i.id}">+ Size</button> <button data-d="${i.id}">Delete</button></td></tr>`).join('') + '</table>';
+  $('itemList').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openEditor(allItems.find(i => i.id == b.dataset.e)));
+  $('itemList').querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
+    const i = allItems.find(x => x.id == b.dataset.s); openEditor({ name: i.name, category: i.category, image_url: i.image_url, color: i.color, copyFrom: i.id }); });
+  $('itemList').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => {
+    const i = allItems.find(x => x.id == b.dataset.d);
+    if (!confirm(`Delete ${i.name} ${i.size || ''}? If it already has sales, it will be hidden instead so your sales history stays correct.`)) return;
+    let r = await db.from('items').delete().eq('id', i.id);
+    if (r.error) { r = await db.from('items').update({ active: false }).eq('id', i.id); if (r.error) return alert(r.error.message);
+      alert('This item has sales history, so it was hidden instead of deleted. Tick "Show hidden items" to see it.'); }
+    await loadItems(); renderItems(); loadInv(); });
+}
+let fLines = [], fImgUrl = null;
+const showImg = () => { $('fImg').src = fImgUrl || ''; $('fImg').style.visibility = fImgUrl ? 'visible' : 'hidden'; };
+$('fPhoto').onchange = async () => {
+  const f = $('fPhoto').files[0]; if (!f) return;
+  try {
+    const bmp = await createImageBitmap(f), sc = Math.min(1, 480 / Math.max(bmp.width, bmp.height)), cv = document.createElement('canvas');
+    cv.width = Math.round(bmp.width * sc); cv.height = Math.round(bmp.height * sc); cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.82)), path = `item-${Date.now()}.jpg`;
+    const { error } = await db.storage.from('item-photos').upload(path, blob, { contentType: 'image/jpeg' });
+    if (error) return alert('Photo upload failed: ' + error.message);
+    fImgUrl = db.storage.from('item-photos').getPublicUrl(path).data.publicUrl; showImg();
+  } catch (e) { alert('Could not read that photo. Try a JPG or PNG.'); }
+};
+$('fPhotoDel').onclick = () => { fImgUrl = null; $('fPhoto').value = ''; showImg(); };
+function openEditor(i) {
+  editId = i.id || null; $('edTitle').textContent = editId ? 'Edit item' : 'New item';
+  $('fName').value = i.name || ''; $('fSize').value = i.size || ''; $('fDesc').value = i.description || '';
+  const cats = allCats();
+  $('fCat').innerHTML = cats.map(c => `<option value="${esc(c)}"${c === i.category ? ' selected' : ''}>${esc(c)}</option>`).join('') + '<option value="__new">+ New category…</option>';
+  if (!cats.length) $('fCat').value = '__new'; $('fCatNew').value = ''; $('fCatNew').hidden = $('fCat').value !== '__new';
+  $('fPrice').value = i.price ?? ''; $('fCogs').value = i.cogs ?? ''; $('fActive').checked = i.active !== false;
+  document.querySelectorAll('[name=fSold]').forEach(r => r.checked = r.value === (i.sold_by || 'each'));
+  $('fSku').value = i.sku || String(Math.max(10000, ...allItems.map(x => parseInt(x.sku) || 0)) + 1); $('fBar').value = i.barcode || '';
+  fImgUrl = i.image_url || null; showImg(); $('fColor').value = i.color || '#e8dccf'; $('fAuto').checked = !i.color;
+  fLines = (recipes[i.id || i.copyFrom] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawF();
+  $('editor').hidden = false; $('fName').focus();
+}
+function drawF() {
+  if (!ings.length) { $('fRecipe').innerHTML = '<small>Add your ingredients in the Inventory tab first, then build the recipe here.</small>'; return; }
+  $('fRecipe').innerHTML = fLines.map((r, n) => { const g = ings.find(i => i.id == r.ingredient_id);
+    return `<div class="line"><select data-fi="${n}" style="flex:1">${ings.map(i => `<option value="${i.id}"${i.id == r.ingredient_id ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}</select>
+    <input data-fq="${n}" type="number" min="0" step="any" value="${r.qty}" style="width:80px"><small>${g ? (g.brew_g_per_l > 0 ? 'ml tea' : g.unit) : ''}</small><button data-fx="${n}">✕</button></div>`; }).join('')
+    + '<button id="fAddIng">+ Add component</button><div class="row"><span>Total cost per cup</span><b id="fCost"></b></div>';
+  const cost = () => { const has = fLines.some(l => l.qty > 0), c = cupCost(fLines.filter(l => l.qty > 0)); $('fCost').textContent = P(c);
+    $('fCogs').disabled = has; if (has) $('fCogs').value = c.toFixed(2); $('fCogsNote').textContent = has ? 'Calculated from the recipe' : ''; };
+  cost(); const R = $('fRecipe');
+  R.querySelectorAll('[data-fi]').forEach(x => x.onchange = () => { fLines[x.dataset.fi].ingredient_id = x.value; drawF(); });
+  R.querySelectorAll('[data-fq]').forEach(x => x.oninput = () => { fLines[x.dataset.fq].qty = num(x.value); cost(); });
+  R.querySelectorAll('[data-fx]').forEach(x => x.onclick = () => { fLines.splice(x.dataset.fx, 1); drawF(); });
+  $('fAddIng').onclick = () => { fLines.push({ ingredient_id: ings[0].id, qty: 0 }); drawF(); };
+}
+$('addItem').onclick = () => openEditor({});
+$('fCancel').onclick = () => $('editor').hidden = true;
+$('fColor').oninput = () => $('fAuto').checked = false;
+$('fCat').onchange = () => $('fCatNew').hidden = $('fCat').value !== '__new';
+$('showHidden').onchange = renderItems;
+$('fSave').onclick = async () => {
+  const cat = $('fCat').value === '__new' ? $('fCatNew').value.trim() : $('fCat').value, lines = fLines.filter(l => l.qty > 0), price = $('fPrice').value.trim();
+  // A recipe cost needs loaded ingredients; a missing ingredient would silently cost ₱0, so block instead
+  if (lines.length && !(await invReady())) return;
+  const miss = lines.filter(l => !ings.find(i => i.id == l.ingredient_id));
+  if (miss.length) return alert(`Not saved: this recipe uses ${miss.length} ingredient${miss.length > 1 ? 's' : ''} that ${miss.length > 1 ? 'are' : 'is'} missing or hidden (ingredient #${miss.map(l => l.ingredient_id).join(', #')}).\nRemove that recipe line or restore the ingredient in Inventory, then save again.`);
+  const row = { name: $('fName').value.trim(), size: $('fSize').value.trim() || null, category: cat, description: $('fDesc').value.trim() || null,
+    price: price === '' ? null : parseFloat(price), active: $('fActive').checked, sold_by: document.querySelector('[name=fSold]:checked').value,
+    sku: $('fSku').value.trim() || null, barcode: $('fBar').value.trim() || null, image_url: fImgUrl, color: $('fAuto').checked ? null : $('fColor').value,
+    cogs: lines.length ? Math.round(cupCost(lines) * 100) / 100 : ($('fCogs').value === '' ? null : parseFloat($('fCogs').value)) };
+  if (!row.name || !row.category || (row.price !== null && isNaN(row.price))) return alert('Please fill in the name and category, and check the price.');
+  let r = editId ? await db.from('items').update(row).eq('id', editId).select().single() : await db.from('items').insert(row).select().single();
+  if (r.error) return alert(r.error.message);
+  const id = r.data.id;
+  if (ings.length) {
+    r = await db.from('recipe_lines').delete().eq('item_id', id); if (r.error) return alert(r.error.message);
+    if (lines.length) { r = await db.from('recipe_lines').insert(lines.map(l => ({ item_id: id, ingredient_id: l.ingredient_id, qty: l.qty }))); if (r.error) return alert(r.error.message); }
+  }
+  $('editor').hidden = true; await loadInv(); await loadItems(); renderItems();
+};
+let ings = [], sups = [], recipes = {}, invOk = false, pos = [], rcv = [], voiding = false, incoming = {}, stockMap = {}, invTab = 'stock', buyLines = [], edit = null;
+const num = v => parseFloat(v) || 0;
+const ingF = () => [{ k: 'name', l: 'Ingredient name' }, { k: 'category', opts: [['Ingredient', 'Ingredient'], ['Packaging', 'Packaging']] },
+  { k: 'unit', opts: [['g', 'Grams (g)'], ['ml', 'Milliliters (ml)'], ['pcs', 'Pieces (pcs)']] },
+  { k: 'pack_size', l: 'Amount in one pack (g / ml / pcs)', t: 'number' }, { k: 'pack_price', l: 'Price per pack (₱)', t: 'number' },
+  { k: 'supplier_id', opts: [['', 'No supplier'], ...sups.map(s => [s.id, s.name])] }, { k: 'low_stock', l: 'Warn when stock is at or below (g / ml / pcs)', t: 'number' },
+  { k: 'brew_g_per_l', l: 'Tea only: grams of leaves per 1000 ml brewed (e.g. 20)', t: 'number' }];
+const supF = [['name', 'Supplier name'], ['contact', 'Contact'], ['email', 'Email'], ['phone', 'Phone'], ['website', 'Website'], ['address1', 'Address 1'],
+  ['address2', 'Address 2'], ['city', 'City'], ['region', 'Region'], ['postal_code', 'Postal code'], ['country', 'Country'], ['note', 'Note']].map(([k, l]) => ({ k, l }));
+const formHTML = (fs, v) => fs.map(f => f.opts ? `<select id="f_${f.k}">${f.opts.map(o => `<option value="${esc(o[0])}"${String(v[f.k] ?? '') === String(o[0]) ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`
+  : `<input id="f_${f.k}" placeholder="${f.l}" ${f.t ? 'type="number" step="any" min="0"' : ''} value="${esc(v[f.k] ?? '')}">`).join('');
+const readForm = fs => { const o = {}; fs.forEach(f => { const x = $('f_' + f.k).value.trim(); o[f.k] = f.t ? num(x) : (x === '' ? null : x); }); return o; };
+const editBox = (title, fs) => `<div class="card" style="border:1px solid #ddd;margin:8px 0"><h3 style="margin-top:0">${edit.id ? 'Edit' : 'New'} ${title}</h3>
+  <div style="display:grid;gap:8px;max-width:380px">${formHTML(fs, edit.v)}<div class="tabs"><button class="pri" id="eSave">Save</button><button id="eCancel">Cancel</button></div></div></div>`;
+function wireEdit(table, fs) {
+  if (!$('eSave')) return;
+  $('eCancel').onclick = () => { edit = null; renderInv(); };
+  $('eSave').onclick = async () => {
+    const btn = $('eSave'), cur = edit; if (!cur || btn.disabled) return;
+    const o = readForm(fs); if (!o.name) return alert('Please enter a name.');
+    if (table === 'ingredients' && !(o.pack_size > 0)) return alert('Amount in one pack must be more than 0.');
+    btn.disabled = true;
+    const r = cur.id ? await db.from(table).update(o).eq('id', cur.id) : await db.from(table).insert(o);
+    if (r.error) { btn.disabled = false; return alert(r.error.message); }
+    edit = null; await loadInv(); if (table === 'ingredients') recalcCosts();
+  };
+}
+async function loadInv() {
+  const [a, b, c, d, e] = await Promise.all([db.from('ingredients').select('*').eq('active', true).order('category').order('name'),
+    db.from('suppliers').select('*').order('name'), db.from('ingredient_stock').select('*'), db.from('recipe_lines').select('*'), db.from('purchases').select('*, purchase_lines(*)').in('status', ['ordered', 'received']).order('id')]);
+  const err = a.error || b.error || c.error || d.error || e.error;
+  if (err) { invOk = false; console.warn(err.message); $('invBody').innerHTML = '';
+    $('lowBanner').innerHTML = `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>⚠ Inventory and recipes could not be loaded:</b> ${esc(err.message)}<br>Sales, recipe costs and stock changes are paused until this loads. Check your connection and reload the page.</div>`;
+    return alert('Inventory and recipes could not be loaded: ' + err.message + '\nSales and stock changes are paused until this loads.'); }
+  invOk = true; ings = a.data; sups = b.data; stockMap = {}; recipes = {}; d.data.forEach(r => (recipes[r.item_id] = recipes[r.item_id] || []).push(r));
+  pos = e.data.filter(p => p.status === 'ordered'); rcv = e.data.filter(p => p.status === 'received').reverse(); incoming = {}; pos.forEach(p => p.purchase_lines.forEach(l => { const g = ings.find(i => i.id == l.ingredient_id); if (g) incoming[g.id] = (incoming[g.id] || 0) + l.packs * g.pack_size; })); c.data.forEach(r => stockMap[r.ingredient_id] = +r.stock);
+  const low = ings.filter(i => i.low_stock > 0 && (stockMap[i.id] || 0) <= i.low_stock);
+  $('tInv').textContent = low.length ? `Inventory (${low.length} low)` : 'Inventory'; $('menu').textContent = low.length ? '☰ ●' : '☰';
+  $('lowBanner').innerHTML = low.length ? `<div style="background:#fde8e8;padding:8px;border-radius:8px;margin-bottom:8px"><b>Time to restock:</b> ${low.map(i => esc(i.name) + ' (' + N(stockMap[i.id] || 0) + ' ' + i.unit + ' left)').join(', ')}</div>` : '';
+  if (!$('inv').hidden) renderInv();
+}
+$('inv').querySelectorAll('[data-t]').forEach(b => b.onclick = () => { invTab = b.dataset.t; edit = null; renderInv(); });
+// Inventory-dependent actions need loaded ingredients and recipes: try loading once more, otherwise refuse
+async function invReady() { if (!invOk) await loadInv(); if (!invOk) alert('Not saved: inventory and recipes are not loaded, so stock and costs cannot be calculated.'); return invOk; }
+const use = (g, q) => g.brew_g_per_l > 0 ? q * g.brew_g_per_l / 1000 : q;
+const cupCost = rl => rl.reduce((t, r) => { const g = ings.find(i => i.id == r.ingredient_id); return g ? t + use(g, r.qty) * g.pack_price / g.pack_size : t; }, 0);
+const usage = ls => { const a = {}; ls.forEach(l => (recipes[l.item_id] || []).forEach(r => { const g = ings.find(i => i.id == r.ingredient_id); if (g) a[g.id] = (a[g.id] || 0) + use(g, r.qty) * l.qty; })); return a; };
+async function adjustStock(oid, oldL, newL, reason) {
+  const a = usage(newL), o = usage(oldL), m = [];
+  new Set([...Object.keys(a), ...Object.keys(o)]).forEach(id => { const d = (o[id] || 0) - (a[id] || 0);
+    if (Math.abs(d) > 1e-9) m.push({ ingredient_id: id, delta: d, reason, note: 'Order #' + oid }); });
+  if (m.length) return (await db.from('stock_moves').insert(m)).error; // null when it worked
+}
+async function recalcCosts() {
+  if (!invOk) return; // loadInv already showed the error; never write costs from unloaded recipes
+  for (const it of allItems) { const rl = recipes[it.id]; if (!rl || !rl.length) continue;
+    const c = Math.round(cupCost(rl) * 100) / 100;
+    if (it.cogs == null || Math.abs(+it.cogs - c) > 0.004) await db.from('items').update({ cogs: c }).eq('id', it.id); }
+  await loadItems();
+}
+let recItem = null, recLines = [];
+function recipeView() {
+  const b = $('invBody');
+  if (!ings.length) return b.innerHTML = 'Add your ingredients in the Stock tab first.';
+  if (!recItem || !allItems.find(i => i.id == recItem)) recItem = allItems[0].id;
+  b.innerHTML = `<select id="r_item">${allItems.map(i => `<option value="${i.id}"${i.id == recItem ? ' selected' : ''}>${esc(i.name)} ${esc(i.size)}${i.active ? '' : ' (hidden)'}</option>`).join('')}</select><div id="r_body" style="margin-top:8px"></div>`;
+  $('r_item').onchange = () => { recItem = $('r_item').value; loadRec(); };
+  loadRec();
+}
+function loadRec() { recLines = (recipes[recItem] || []).map(r => ({ ingredient_id: r.ingredient_id, qty: +r.qty })); drawRec(); }
+function drawRec() {
+  const it = allItems.find(i => i.id == recItem), rb = $('r_body');
+  rb.innerHTML = '<table>' + recLines.map((r, n) => { const g = ings.find(i => i.id == r.ingredient_id);
+    return `<tr><td><select data-ri="${n}">${ings.map(i => `<option value="${i.id}"${i.id == r.ingredient_id ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}</select></td>
+    <td><input data-rq="${n}" type="number" min="0" step="any" value="${r.qty}" style="width:90px"> ${g ? (g.brew_g_per_l > 0 ? 'ml of brewed tea' : g.unit) : ''}</td><td><button data-rx="${n}">✕</button></td></tr>`; }).join('') + `</table>
+    <button id="r_add">+ Add ingredient</button><div class="row big"><span>Cost per cup</span><span id="r_cost"></span></div>
+    <div class="row"><span>Selling price</span><span>${it.price == null ? 'Ask at sale' : P(it.price)}</span></div><button class="pri" id="r_save">Save recipe</button>`;
+  const showCost = () => $('r_cost').textContent = P(cupCost(recLines)); showCost();
+  rb.querySelectorAll('[data-ri]').forEach(x => x.onchange = () => { recLines[x.dataset.ri].ingredient_id = x.value; drawRec(); });
+  rb.querySelectorAll('[data-rq]').forEach(x => x.oninput = () => { recLines[x.dataset.rq].qty = num(x.value); showCost(); });
+  rb.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => { recLines.splice(x.dataset.rx, 1); drawRec(); });
+  $('r_add').onclick = () => { recLines.push({ ingredient_id: ings[0].id, qty: 0 }); drawRec(); };
+  $('r_save').onclick = async () => {
+    let r = await db.from('recipe_lines').delete().eq('item_id', recItem); if (r.error) return alert(r.error.message);
+    const rows = recLines.filter(l => l.qty > 0).map(l => ({ item_id: recItem, ingredient_id: l.ingredient_id, qty: l.qty }));
+    if (rows.length) { r = await db.from('recipe_lines').insert(rows); if (r.error) return alert(r.error.message); }
+    await loadInv(); await recalcCosts(); alert('Recipe saved. Cost per cup: ' + P(cupCost(recipes[recItem] || [])));
+  };
+}
+async function renderInv() {
+  const b = $('invBody');
+  if (invTab === 'stock') {
+    b.innerHTML = (edit ? editBox('ingredient', ingF()) : '<button class="pri" id="addIng">+ Add ingredient</button>') + '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Incoming</th><th>Warn at</th><th>Pack</th><th>Supplier</th><th></th></tr>' +
+      ings.map(i => { const s = stockMap[i.id] || 0, low = i.low_stock > 0 && s <= i.low_stock;
+        return `<tr style="${low ? 'background:#fde8e8' : ''}"><td>${esc(i.name)}<br><small>${i.category}</small></td><td>${N(s)} ${i.unit}</td><td>${incoming[i.id] ? '+' + N(incoming[i.id]) + ' ' + i.unit : '—'}</td><td>${i.low_stock ? N(i.low_stock) : '—'}</td>
+        <td>${N(i.pack_size)} ${i.unit} @ ${P(i.pack_price)}</td><td>${esc((sups.find(x => x.id == i.supplier_id) || {}).name || '')}</td>
+        <td style="white-space:nowrap"><button data-ie="${i.id}">Edit</button> <button data-ic="${i.id}">Count</button> <button data-ix="${i.id}">Delete</button></td></tr>`; }).join('') + '</table></div>';
+    if ($('addIng')) $('addIng').onclick = () => { edit = { id: null, v: { category: 'Ingredient', unit: 'g' } }; renderInv(); };
+    b.querySelectorAll('[data-ie]').forEach(x => x.onclick = () => { edit = { id: x.dataset.ie, v: ings.find(i => i.id == x.dataset.ie) }; renderInv(); });
+    b.querySelectorAll('[data-ic]').forEach(x => x.onclick = async () => {
+      const i = ings.find(y => y.id == x.dataset.ic), cur = stockMap[i.id] || 0, v = prompt(`How much ${i.name} is left right now (in ${i.unit})?`, +cur.toFixed(2));
+      if (v === null || v.trim() === '' || isNaN(v)) return; const d = num(v) - cur; if (!d) return;
+      const r = await db.from('stock_moves').insert({ ingredient_id: i.id, delta: d, reason: 'stock check', note: 'Counted ' + num(v) + ' ' + i.unit });
+      if (r.error) return alert(r.error.message); loadInv(); });
+    b.querySelectorAll('[data-ix]').forEach(x => x.onclick = async () => {
+      const i = ings.find(y => y.id == x.dataset.ix);
+      if (!confirm(`Delete ${i.name}? If it already has stock history, it will be hidden instead so your records stay correct.`)) return;
+      let r = await db.from('ingredients').delete().eq('id', i.id);
+      if (r.error) { r = await db.from('ingredients').update({ active: false }).eq('id', i.id); if (r.error) return alert(r.error.message);
+        alert(i.name + ' has history, so it was hidden instead of deleted.'); }
+      loadInv(); });
+    wireEdit('ingredients', ingF());
+  } else if (invTab === 'sup') {
+    b.innerHTML = (edit ? editBox('supplier', supF) : '<button class="pri" id="addSup">+ Add supplier</button>') + '<table>' + sups.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.contact)} ${esc(s.phone)}</td><td>${esc(s.city)}</td><td style="white-space:nowrap"><button data-se="${s.id}">Edit</button> <button data-sx="${s.id}">Delete</button></td></tr>`).join('') + '</table>';
+    if ($('addSup')) $('addSup').onclick = () => { edit = { id: null, v: {} }; renderInv(); };
+    b.querySelectorAll('[data-se]').forEach(x => x.onclick = () => { edit = { id: x.dataset.se, v: sups.find(s => s.id == x.dataset.se) }; renderInv(); });
+    b.querySelectorAll('[data-sx]').forEach(x => x.onclick = async () => {
+      const s = sups.find(y => y.id == x.dataset.sx); if (!confirm(`Delete supplier ${s.name}?`)) return;
+      const r = await db.from('suppliers').delete().eq('id', s.id);
+      if (r.error) return alert(s.name + " is used by an ingredient or a past purchase, so it can't be deleted."); loadInv(); });
+    wireEdit('suppliers', supF);
+  } else if (invTab === 'hist') {
+    const r = await db.from('stock_moves').select('*, ingredients(name, unit)').order('created_at', { ascending: false }).limit(200);
+    if (r.error) return alert(r.error.message);
+    b.innerHTML = '<div style="overflow-x:auto"><table><tr><th>Date</th><th>Ingredient</th><th>Reason</th><th>Change</th></tr>' + r.data.map(m => `<tr><td>${new Date(m.created_at).toLocaleString()}</td><td>${esc(m.ingredients.name)}</td>
+      <td>${esc(m.reason)}<br><small>${esc(m.note)}</small></td><td>${m.delta > 0 ? '+' : ''}${N(m.delta)} ${m.ingredients.unit}</td></tr>`).join('') + '</table></div>';
+  } else if (invTab === 'rec') recipeView(); else if (invTab === 'po') poView(); else if (invTab === 'val') valView(); else buyView();
+}
+async function receivePO(pid, sid, lines) {
+  let r = await db.from('stock_moves').insert(lines.map(l => ({ ingredient_id: l.ingredient_id, delta: l.packs * ings.find(i => i.id == l.ingredient_id).pack_size, reason: 'received', note: 'Purchase #' + pid })));
+  if (r.error) return r.error;
+  for (const l of lines) await db.from('ingredients').update({ pack_price: l.pack_price, supplier_id: sid }).eq('id', l.ingredient_id);
+  r = await db.from('purchases').update({ status: 'received', received_at: new Date().toISOString() }).eq('id', pid); return r.error;
+}
+// Void a received purchase: claim it first (received -> cancelled), then add negative stock moves. Nothing is deleted.
+async function voidPO(pid) {
+  let r = await db.from('purchases').update({ status: 'cancelled' }).eq('id', pid).eq('status', 'received').select('id');
+  if (r.error) return 'Could not void Purchase #' + pid + ': ' + r.error.message + '\nNothing was changed.';
+  if (r.data.length !== 1) return 'Purchase #' + pid + ' is no longer marked received (it may already be voided). Nothing was changed.';
+  const fail = m => `Purchase #${pid} was marked cancelled, but its stock was NOT reversed (${m}).\nThe void is NOT complete. Check Inventory > History and fix the stock with Count.`;
+  r = await db.from('purchase_lines').select('ingredient_id, packs, ingredients(pack_size)').eq('purchase_id', pid);
+  if (r.error) return fail(r.error.message);
+  if (r.data.some(l => !l.ingredients)) return fail('an ingredient could not be read');
+  if (!r.data.length) return 'Purchase #' + pid + ' voided. It had no items, so no stock was changed.';
+  r = await db.from('stock_moves').insert(r.data.map(l => ({ ingredient_id: l.ingredient_id, delta: -(l.packs * l.ingredients.pack_size), reason: 'voided', note: 'Void Purchase #' + pid })));
+  if (r.error) return fail(r.error.message);
+  return 'Purchase #' + pid + ' voided. Its stock was reversed.';
+}
+function poView() {
+  $('invBody').innerHTML = pos.length ? '<div style="overflow-x:auto"><table><tr><th>#</th><th>Supplier</th><th>Ordered</th><th>Expected</th><th>Items</th><th>Total</th><th></th></tr>' + pos.map(p =>
+    `<tr><td>${p.id}</td><td>${esc((sups.find(x => x.id == p.supplier_id) || {}).name || '')}</td><td>${p.purchase_date}</td><td>${p.expected_on || '—'}</td>
+    <td>${p.purchase_lines.map(l => { const g = ings.find(i => i.id == l.ingredient_id); return `${+l.packs} × ${esc(g ? g.name : '?')}`; }).join('<br>')}</td><td>${P(p.total)}</td>
+    <td style="white-space:nowrap"><button class="pri" data-pr="${p.id}">Receive</button> <button data-pc="${p.id}">Cancel</button></td></tr>`).join('') + '</table></div>' : 'No orders waiting to arrive. Use Buy stock → Save as ordered.';
+  $('invBody').innerHTML += '<h3>Received purchases</h3>' + (rcv.length ? '<div style="overflow-x:auto"><table><tr><th>#</th><th>Date</th><th>Supplier</th><th>Total</th><th>Status</th><th></th></tr>' + rcv.map(p =>
+    `<tr><td>${p.id}</td><td>${p.purchase_date}</td><td>${esc((sups.find(x => x.id == p.supplier_id) || {}).name || '')}</td><td>${P(p.total)}</td><td>${esc(p.status)}</td>
+    <td><button data-pv="${p.id}">Void</button></td></tr>`).join('') + '</table></div>' : 'No received purchases.');
+  $('invBody').querySelectorAll('[data-pv]').forEach(x => x.onclick = async () => {
+    if (voiding) return; const pid = x.dataset.pv;
+    if (!confirm('Void Purchase #' + pid + '? This will reverse the stock added by this purchase.')) return;
+    voiding = true; $('invBody').querySelectorAll('[data-pv]').forEach(y => y.disabled = true);
+    try { alert(await voidPO(pid)); } catch (er) { alert('Void Purchase #' + pid + ' failed: ' + er.message + '\nCheck Inventory > History before trying again.'); }
+    voiding = false; await loadInv(); });
+  $('invBody').querySelectorAll('[data-pr]').forEach(x => x.onclick = async () => { const p = pos.find(y => y.id == x.dataset.pr);
+    if (!confirm('Mark purchase #' + p.id + ' as received and add it to your stock?')) return;
+    const er = await receivePO(p.id, p.supplier_id, p.purchase_lines); if (er) return alert(er.message); await loadInv(); recalcCosts(); });
+  $('invBody').querySelectorAll('[data-pc]').forEach(x => x.onclick = async () => { if (!confirm('Cancel this order?')) return;
+    const r = await db.from('purchases').update({ status: 'cancelled' }).eq('id', x.dataset.pc); if (r.error) return alert(r.error.message); loadInv(); });
+}
+function valView() {
+  let total = 0; const cats = {};
+  ings.forEach(i => { const st = Math.max(0, stockMap[i.id] || 0), u = i.pack_size ? i.pack_price / i.pack_size : 0; (cats[i.category] = cats[i.category] || []).push({ i, st, u, v: st * u }); total += st * u; });
+  $('invBody').innerHTML = '<div style="overflow-x:auto"><table><tr><th>Ingredient</th><th>In stock</th><th>Cost per unit</th><th>Value</th></tr>' + Object.entries(cats).map(([c, rs]) =>
+    `<tr><td colspan="3"><b>${esc(c)}</b></td><td><b>${P(rs.reduce((t, r) => t + r.v, 0))}</b></td></tr>` + rs.map(r => `<tr><td>${esc(r.i.name)}</td><td>${N(r.st)} ${r.i.unit}</td><td>₱${r.u.toFixed(4)}</td><td>${P(r.v)}</td></tr>`).join('')).join('')
+    + `</table></div><div class="row big"><span>Total stock value</span><span>${P(total)}</span></div><small>Stock is valued at each ingredient's current price.</small>`;
+}
+function buyView() {
+  if (!ings.length) return $('invBody').innerHTML = 'Add your ingredients in the Stock tab first.';
+  $('invBody').innerHTML = `<div style="display:grid;gap:8px;max-width:560px"><select id="b_sup"><option value="">Select a supplier</option>${sups.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+    <input id="b_date" type="date" value="${day(new Date())}"><input id="b_notes" placeholder="Notes"><label>Expected on (optional) <input id="b_exp" type="date"></label>
+    <div class="tabs"><select id="b_ing">${ings.map(i => `<option value="${i.id}">${esc(i.name)} (${N(stockMap[i.id] || 0)} ${i.unit} in stock)</option>`).join('')}</select>
+    <input id="b_packs" type="number" min="0" step="any" placeholder="Packs" style="width:90px"><input id="b_price" type="number" min="0" step="any" placeholder="₱ per pack" style="width:110px"><button id="b_add">Add</button><button id="b_auto">Autofill low stock</button></div>
+    <div id="b_lines"></div><input id="b_extra" type="number" min="0" step="any" placeholder="Additional costs, e.g. delivery (₱)"><div class="row big"><span>Total</span><span id="b_total"></span></div>
+    <div class="tabs"><button id="b_ord">Save as ordered</button><button class="pri" id="b_go">Receive now</button></div></div>`;
+  const fillPrice = () => $('b_price').value = ings.find(i => i.id == $('b_ing').value).pack_price || '';
+  const lines = () => { const sub = buyLines.reduce((t, l) => t + l.packs * l.price, 0);
+    $('b_lines').innerHTML = '<table>' + buyLines.map((l, n) => { const i = ings.find(x => x.id == l.id);
+      return `<tr><td>${esc(i.name)}</td><td>${l.packs} pack × ${P(l.price)}<br><small>= ${N(l.packs * i.pack_size)} ${i.unit}</small></td><td>${P(l.packs * l.price)}</td><td><button data-rm="${n}">✕</button></td></tr>`; }).join('') + '</table>';
+    $('b_total').textContent = P(sub + num($('b_extra').value));
+    $('b_lines').querySelectorAll('[data-rm]').forEach(x => x.onclick = () => { buyLines.splice(x.dataset.rm, 1); lines(); }); };
+  $('b_ing').onchange = fillPrice; $('b_extra').oninput = lines; fillPrice(); lines();
+  $('b_add').onclick = () => { const packs = num($('b_packs').value); if (!packs) return alert('Enter how many packs.');
+    buyLines.push({ id: $('b_ing').value, packs, price: num($('b_price').value) }); $('b_packs').value = ''; lines(); };
+  const save = async status => {
+    if (!buyLines.length) return alert('Add at least one item.'); const sid = $('b_sup').value; if (!sid) return alert('Select a supplier.');
+    const extra = num($('b_extra').value), total = buyLines.reduce((t, l) => t + l.packs * l.price, 0) + extra;
+    let r = await db.from('purchases').insert({ supplier_id: sid, purchase_date: $('b_date').value, notes: $('b_notes').value.trim() || null, extra_costs: extra, total, status, expected_on: $('b_exp').value || null }).select().single();
+    if (r.error) return alert(r.error.message); const pid = r.data.id, ls = buyLines.map(l => ({ ingredient_id: l.id, packs: l.packs, pack_price: l.price }));
+    r = await db.from('purchase_lines').insert(ls.map(l => ({ purchase_id: pid, ...l }))); if (r.error) return alert(r.error.message);
+    if (status === 'received') { const er = await receivePO(pid, sid, ls); if (er) return alert(er.message); }
+    buyLines = []; alert(status === 'received' ? 'Stock received.' : 'Order saved. It shows as Incoming until you receive it.');
+    invTab = status === 'received' ? 'stock' : 'po'; await loadInv(); if (status === 'received') recalcCosts();
+  };
+  $('b_go').onclick = () => save('received'); $('b_ord').onclick = () => save('ordered');
+  $('b_auto').onclick = () => { let n = 0;
+    ings.forEach(i => { const have = (stockMap[i.id] || 0) + (incoming[i.id] || 0);
+      if (i.low_stock > 0 && have <= i.low_stock && !buyLines.some(l => l.id == i.id)) { buyLines.push({ id: String(i.id), packs: Math.max(1, Math.ceil((i.low_stock * 2 - have) / i.pack_size)), price: +i.pack_price }); n++; } });
+    if (!n) alert('Nothing is low right now.'); lines(); };
+}
+function renderTabs() {
+  const cats = ['All', ...new Set(items.map(i => i.category))];
+  $('tabs').innerHTML = '';
+  cats.forEach(c => { const b = document.createElement('button'); b.textContent = c; if (c === cat) b.className = 'on';
+    b.onclick = () => { cat = c; renderTabs(); renderGrid(); }; $('tabs').appendChild(b); });
+}
+function tap(i) {
+  let q = 1;
+  if (i.sold_by === 'weight') { q = parseFloat(prompt('Quantity (weight or volume)?')); if (!(q > 0)) return; }
+  if (i.price == null && custom[i.id] == null) { const p = parseFloat(prompt('Price for ' + i.name + '?')); if (isNaN(p) || p < 0) return; custom[i.id] = p; }
+  cart[i.id] = (cart[i.id] || 0) + q; renderCart();
+}
+function pick(vs) {
+  const p = $('picker'); p.hidden = false;
+  p.innerHTML = `<div><b>${esc(vs[0].name)}</b>${vs.map((v, n) => `<button data-v="${n}">${esc(v.size || 'Regular')} · ${v.price == null ? 'Ask price' : P(v.price)}</button>`).join('')}<button id="pCancel">Cancel</button></div>`;
+  p.querySelectorAll('[data-v]').forEach(x => x.onclick = () => { p.hidden = true; tap(vs[x.dataset.v]); });
+  $('pCancel').onclick = () => p.hidden = true; p.onclick = e => { if (e.target === p) p.hidden = true; };
+}
+function renderGrid() {
+  $('grid').innerHTML = ''; const groups = new Map();
+  items.filter(i => cat === 'All' || i.category === cat).forEach(i => { const k = i.category + '|' + i.name; (groups.get(k) || groups.set(k, []).get(k)).push(i); });
+  groups.forEach(vs => {
+    const v0 = vs[0], img = (vs.find(v => v.image_url) || {}).image_url, ps = vs.filter(v => v.price != null).map(v => +v.price), b = document.createElement('button');
+    b.className = 'tile' + (img ? '' : ' nophoto');
+    const col = (vs.find(v => v.color) || {}).color;
+    b.style.backgroundColor = col || `hsl(${[...v0.category].reduce((h, c) => h + c.charCodeAt(0), 0) * 37 % 360} 45% 88%)`;
+    if (col && ((n => 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255))(parseInt(col.slice(1), 16)) < 140)) b.classList.add('dark');
+    if (img) b.style.backgroundImage = 'url("' + img + '")';
+    b.innerHTML = `<div class="cap">${esc(v0.name)}<small>${vs.length > 1 ? vs.map(v => esc(v.size)).join(' / ') : esc(v0.size)} · ${ps.length ? (vs.length > 1 ? 'from ' : '') + P(Math.min(...ps)) : 'Ask price'}</small></div>`;
+    b.onclick = () => vs.length === 1 ? tap(v0) : pick(vs); $('grid').appendChild(b);
+  });
+}
+function totals() {
+  const sub = Object.entries(cart).reduce((s, [id, q]) => s + pr(items.find(i => i.id == id)) * q, 0);
+  const disc = Math.min(discSel ? Math.round((discSel.kind === 'percent' ? sub * discSel.value / 100 : +discSel.value) * 100) / 100 : (+$('disc').value || 0), sub);
+  if (discSel) $('disc').value = disc || '';
+  return { sub, disc, total: sub - disc };
+}
+function renderCart() {
+  $('lines').innerHTML = '';
+  Object.entries(cart).forEach(([id, q]) => {
+    const i = items.find(x => x.id == id), d = document.createElement('div'); d.className = 'line';
+    d.innerHTML = `<span style="flex:1">${i.name} ${i.size || ''}</span><button>-</button><b>${q}</b><button>+</button><span>${P(pr(i) * q)}</span>`;
+    const [m, p] = d.querySelectorAll('button');
+    m.onclick = () => { if (--cart[id] <= 0) delete cart[id]; renderCart(); };
+    p.onclick = () => { cart[id]++; renderCart(); }; $('lines').appendChild(d);
+  });
+  const t = totals(); $('sub').textContent = P(t.sub); $('tot').textContent = P(t.total);
+  $('chg').textContent = P(Math.max(0, (+$('cash').value || 0) - t.total));
+}
+['disc', 'cash'].forEach(id => $(id).oninput = renderCart);
+$('pay').onchange = () => $('refRow').hidden = $('pay').value === 'cash';
+const PAY_LABEL = { cash: 'Cash', gcash: 'GCash', bank: 'Bank Transfer' }, payLabel = t => PAY_LABEL[t] || t || '';
+$('clear').onclick = () => { cart = {}; custom = {}; cur = null; discSel = null; $('discSel').value = ''; $('disc').disabled = false; $('disc').value = ''; $('cash').value = ''; $('payRef').value = ''; $('cname').value = ''; $('dine').value = 'Dine in'; $('tkTitle').textContent = 'Current order'; renderCart(); };
+const fail = e => { alert(e.message); return null; };
+// The order is already saved at this point, so only warn (returning null would let Charge create a duplicate sale)
+const stockFail = (id, e) => { if (e) alert(`Order #${id} was saved, but its stock was NOT updated: ${e.message}\nCheck Inventory > History and fix the stock with Count.`); };
+async function persist(status) {
+  if (!Object.keys(cart).length) { alert('The order is empty.'); return null; }
+  if (!(await invReady())) return null;
+  const t = totals(), cash = +$('cash').value || 0, pay = $('pay').value, paid = status === 'paid', cashPay = paid && pay === 'cash';
+  if (cashPay && cash < t.total) { alert('Cash received is less than the total.'); return null; }
+  const base = { subtotal: t.sub, discount: t.disc, total: t.total, status, dining_option: $('dine').value,
+    customer_name: $('cname').value.trim() || null, payment_type: paid ? pay : null, payment_ref: paid && pay !== 'cash' ? $('payRef').value.trim() || null : null,
+    cash_received: cashPay ? cash : null, change_given: cashPay ? cash - t.total : null, paid_at: paid ? new Date().toISOString() : null };
+  const lines = id => Object.entries(cart).map(([iid, q]) => { const i = items.find(x => x.id == iid);
+    return { sale_id: id, item_id: i.id, item_name: i.name, size: i.size, qty: q, unit_price: pr(i), unit_cogs: i.cogs }; });
+  let id = cur, r;
+  if (id) {
+    const old = (openOrders.find(s => s.id == id) || {}).sale_items || [];
+    r = await db.from('sale_items').delete().eq('sale_id', id); if (r.error) return fail(r.error);
+    r = await db.from('sale_items').insert(lines(id)); if (r.error) return fail(r.error);
+    r = await db.from('sales').update(base).eq('id', id); if (r.error) return fail(r.error);
+    stockFail(id, await adjustStock(id, old, lines(id), 'order edited'));
+  } else {
+    r = await db.from('sales').insert(base).select().single(); if (r.error) return fail(r.error);
+    id = r.data.id;
+    r = await db.from('sale_items').insert(lines(id));
+    if (r.error) { await db.from('sales').update({ voided: true }).eq('id', id); return fail(r.error); }
+  }
+  if (!cur) stockFail(id, await adjustStock(id, [], lines(id), 'sold'));
+  loadInv();
+  return { id, t, cash, pay };
+}
+$('saveOrd').onclick = async () => { const r = await persist('open'); if (r) { alert('Order saved as unpaid.'); $('clear').onclick(); } };
+$('charge').onclick = async () => {
+  // Money only goes into the drawer during a shift (new sales and paying unpaid orders alike)
+  const s = await db.from('shifts').select('id').is('closed_at', null).limit(1);
+  if (s.error) return alert('Could not check the shift: ' + s.error.message);
+  if (!s.data.length) return alert('No shift is open. Open a shift (☰ → Shift) before charging.');
+  const r = await persist('paid');
+  if (r) { alert('Paid. Change: ' + P(r.pay === 'cash' ? r.cash - r.t.total : 0)); $('clear').onclick(); } };
+
+const ago = t => { const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + m % 60 + ' min'; };
+const tm = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const lineText = s => s.sale_items.map(l => `${l.qty}× ${esc(l.item_name)} ${esc(l.size)}`).join(', ');
+async function loadOrders() {
+  let r = await db.from('sales').select('*, sale_items(*)').eq('status', 'open').eq('voided', false).order('created_at');
+  if (r.error) return alert(r.error.message);
+  openOrders = r.data;
+  $('openList').innerHTML = openOrders.length ? '<table>' + openOrders.map(s => `<tr><td>${esc(s.customer_name || 'Order #' + s.id)}</td>
+    <td>${esc(s.dining_option)}</td><td>${lineText(s)}</td><td>${P(s.total)}</td><td>Ordered ${tm(s.created_at)}<br><small>waiting ${ago(s.created_at)}</small></td>
+    <td style="white-space:nowrap"><button class="pri" data-o="${s.id}">Open / Pay</button> <button data-x="${s.id}">Cancel</button></td></tr>`).join('') + '</table>' : 'No unpaid orders.';
+  $('openList').querySelectorAll('[data-o]').forEach(b => b.onclick = () => openOrder(openOrders.find(s => s.id == b.dataset.o)));
+  $('openList').querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
+    if (!confirm('Cancel this unpaid order?') || !(await invReady())) return;
+    const o = openOrders.find(s => s.id == b.dataset.x); const se = await adjustStock(o.id, o.sale_items, [], 'order cancelled');
+    if (se) return alert('Could not return the stock, so the order was NOT cancelled: ' + se.message);
+    const r = await db.from('sales').update({ voided: true }).eq('id', b.dataset.x).select('id');
+    if (r.error || r.data.length !== 1) alert(`The stock for Order #${o.id} was returned, but the order could NOT be marked cancelled${r.error ? ': ' + r.error.message : ''}.\nDo not press Cancel again (it would return the stock twice). Check Inventory > History and fix the stock with Count.`);
+    loadInv(); loadOrders(); });
+}
+function openOrder(s) {
+  cart = {}; custom = {};
+  s.sale_items.forEach(l => { if (items.find(i => i.id == l.item_id)) { cart[l.item_id] = l.qty; if (items.find(i => i.id == l.item_id).price == null) custom[l.item_id] = +l.unit_price; } else alert(l.item_name + ' is no longer on the menu, so it was left out.'); });
+  cur = s.id; $('dine').value = s.dining_option; $('cname').value = s.customer_name || ''; discSel = null; $('discSel').value = ''; $('disc').disabled = false; $('disc').value = s.discount || '';
+  $('tkTitle').textContent = 'Order #' + s.id + ' (unpaid)'; show('sell'); renderCart();
+}
+
+let met = 'net', last = null;
+const MET = { gross: 'Gross sales', refunds: 'Refunds', disc: 'Discounts', net: 'Net sales', profit: 'Gross profit' };
+function setRange(a, b) { $('from').value = day(a); $('to').value = day(b); }
+const quick = (fn) => () => { const n = new Date(); setRange(...fn(n)); loadReport(); };
+$('rToday').onclick = quick(n => [n, n]);
+$('r7').onclick = quick(n => [new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6), n]);
+$('rMonth').onclick = quick(n => [new Date(n.getFullYear(), n.getMonth(), 1), n]);
+$('rYear').onclick = quick(n => [new Date(n.getFullYear(), 0, 1), n]);
+$('go').onclick = loadReport; $('tod').onchange = loadReport; $('grp').onchange = () => last && drawReport();
+const shift = dir => { const a = new Date($('from').value + 'T00:00:00'), b = new Date($('to').value + 'T00:00:00'), n = Math.round((b - a) / 864e5) + 1;
+  a.setDate(a.getDate() + dir * n); b.setDate(b.getDate() + dir * n); setRange(a, b); loadReport(); };
+$('rPrev').onclick = () => shift(-1); $('rNext').onclick = () => shift(1);
+async function fetchSales(from, to) {
+  let rows = [], p = 0;
+  while (true) {
+    const { data, error } = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').gte('paid_at', from.toISOString())
+      .lt('paid_at', to.toISOString()).order('paid_at', { ascending: false }).range(p * 1000, p * 1000 + 999);
+    if (error) { alert(error.message); return null; }
+    rows = rows.concat(data); if (data.length < 1000) break; p++;
+  }
+  const [h1, h2] = $('tod').value.split('-').map(Number);
+  return rows.filter(s => { const h = new Date(s.paid_at).getHours(); return h >= h1 && h < h2; });
+}
+const calc = rows => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 0, orders: 0 };
+  rows.forEach(s => { o.gross += +s.subtotal; if (s.voided) { o.refunds += +s.subtotal; return; }
+    o.disc += +s.discount; o.net += +s.total; o.orders++; s.sale_items.forEach(l => o.cost += l.qty * (+l.unit_cogs || 0)); });
+  o.profit = o.net - o.cost; return o; };
+async function loadReport() {
+  const from = new Date($('from').value + 'T00:00:00'), to = new Date($('to').value + 'T00:00:00'); to.setDate(to.getDate() + 1);
+  const oxCat = {}, pf = new Date(+from - (to - from)), [rows, prev, hr, hpr, ox, oxPrev] = await Promise.all([fetchSales(from, to), fetchSales(pf, from), fetchHist(from, to), fetchHist(pf, from), fetchExp(from, to, oxCat), fetchExp(pf, from)]);
+  if (!rows || !prev) return;
+  // fetchHist returns { error } when the query fails; the report still shows live sales but is flagged incomplete
+  const histErr = hr.error || hpr.error || null, histAll = hr.error ? [] : hr, hprevAll = hpr.error ? [] : hpr;
+  const hist = liveFirst(histAll, rows), hprev = liveFirst(hprevAll, prev);
+  const cur = addc(calc(rows), hcalc(hist)), prv = addc(calc(prev), hcalc(hprev));
+  last = { rows, hist, histAll, histErr, from, to, cur, prev: prv, days: Math.round((to - from) / 864e5), pl: { ...plCalc(cur, ox), partial: $('tod').value !== '0-24' }, plPrev: plCalc(prv, oxPrev), opexByCat: oxCat }; last.health = calcHealth(last.pl, last.days); drawReport();
+}
+const bkey = (d, g) => g === 'm' ? day(d).slice(0, 7) : g === 'w' ? day(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7)) : day(d);
+const blab = (k, g) => g === 'm' ? new Date(k + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+  : (g === 'w' ? 'Wk ' : '') + new Date(k + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+function chart(pts) {
+  const W = 800, H = 250, L = 70, R = 12, T = 10, B = 34, n = pts.length, hi = Math.max(...pts.map(p => p.v), 1), lo = Math.min(0, ...pts.map(p => p.v));
+  const x = i => L + (n > 1 ? i * (W - L - R) / (n - 1) : (W - L - R) / 2), y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo)), step = Math.ceil(n / 10);
+  const grid = [0, 1, 2, 3].map(i => { const v = lo + (hi - lo) * i / 3; return `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#eee"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#777">${P(v).replace('.00', '')}</text>`; }).join('');
+  const line = pts.map((p, i) => `${x(i)},${y(p.v)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${grid}<polygon points="${x(0)},${y(0)} ${line} ${x(n - 1)},${y(0)}" fill="#8b5e3c22"/><polyline points="${line}" fill="none" stroke="#8b5e3c" stroke-width="2"/>`
+    + pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="3" fill="#fff" stroke="#8b5e3c"><title>${p.label}: ${P(p.v)}</title></circle>${i % step ? '' : `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="#777">${p.label}</text>`}`).join('') + '</svg>';
+}
+function drawPL() {
+  const a = last.pl, b = last.plPrev, ps = new Date(+last.from - (last.to - last.from)), pe = new Date(+last.from - 864e5), end = new Date(+last.to - 864e5);
+  const dl = (x, y) => x === y ? x : x + ' to ' + y;
+  const row = (label, k, bold) => { const d = a[k] - b[k]; return `<tr${bold ? ' style="font-weight:700"' : ''}><td>${label}</td><td>${P(a[k])}</td><td>${P(b[k])}</td><td>${d >= 0 ? '+' : '-'}${P(Math.abs(d))}</td></tr>`; };
+  $('plBox').innerHTML = '<b>Profit &amp; Loss</b>'
+    + (a.partial ? '<div style="background:#fff4d6;padding:8px;border-radius:8px;margin:6px 0">A time-of-day filter is on, so this P&amp;L is partial: operating expenses are not included and imported history is left out. Choose "All day" for the full picture.</div>' : '')
+    + `<div style="overflow-x:auto"><table><tr><th></th><th>${dl(day(last.from), day(end))}</th><th>Previous: ${dl(day(ps), day(pe))}</th><th>Change</th></tr>`
+    + row('Net sales', 'net_sales') + row('Less: COGS', 'cogs') + row('Gross profit', 'gross_profit', 1)
+    + row('Less: Operating expenses' + (a.partial ? ' (not included)' : ''), 'operating_expenses') + row('Net profit' + (a.partial ? ' (partial)' : ''), 'net_profit', 1) + '</table></div>';
+}
+function drawHealth() {
+  const h = (typeof last !== 'undefined' && last && last.health) || {}, pc = v => (Number(v) || 0).toFixed(1) + '%',
+    box = (label, v) => `<div class="card"><small>${label}</small><div class="big">${pc(v)}</div></div>`;
+  const pl = typeof last !== 'undefined' && last && last.pl, warn = pl && pl.partial === false && pl.operating_expenses === 0
+    ? '<div style="background:#fff4d6;padding:8px;border-radius:8px;margin:6px 0">⚠ Expense data may be incomplete. No operating expenses are recorded for this period. Net Profit and Net Margin may be overstated.</div>' : '';
+  $('healthBox').innerHTML = '<b>Business Health</b><div class="stats">' + box('Gross Margin', h.gross_margin) + box('COGS %', h.cogs_pct) + box('Operating Expense %', h.opex_pct) + box('Net Margin', h.net_margin) + `<div class="card"><small>Avg Daily Net Sales</small><div class="big">${P(h.avg_daily_sales)}</div></div>`
+    + '</div><small style="color:#777">Net margin is based on recorded operating expenses.</small>' + warn + '<div id="bwBox" style="margin-top:8px"></div>';
+}
+// Best and lowest period, taken from last.tbl (same rows as the chart and export table: Days, Weeks, or Months)
+function drawBW() {
+  const box = $('bwBox'); if (!box) return;
+  const t = typeof last !== 'undefined' && last && last.tbl;
+  if (!t || !t.length) { box.innerHTML = 'No daily sales data available.'; return; }
+  const best = t.reduce((a, r) => r.c.net > a.c.net ? r : a), low = t.reduce((a, r) => r.c.net < a.c.net ? r : a),
+    unit = { d: 'Day', w: 'Week', m: 'Month' }[$('grp').value] || 'Day',
+    cell = (title, r) => `<div style="flex:1;min-width:160px"><small>${title}</small><div><b>${esc(r.label)}</b> · ${P(r.c.net)}</div></div>`;
+  box.innerHTML = '<div style="display:flex;gap:16px;flex-wrap:wrap">' + cell('Best Sales ' + unit, best) + cell('Lowest Sales ' + unit, low) + '</div>';
+}
+function drawOX() {
+  const rows = Object.entries(last.opexByCat || {}).sort((a, b) => b[1] - a[1]), total = rows.reduce((t, [, v]) => t + v, 0);
+  $('oxBox').innerHTML = '<b>Operating Expense Breakdown</b>'
+    + (last.pl.partial ? '<div style="background:#fff4d6;padding:8px;border-radius:8px;margin:6px 0">A time-of-day filter is on, so operating expenses are not included. Choose "All day" to see them.</div>' : '')
+    + '<div style="overflow-x:auto"><table><tr><th>Category</th><th>Amount</th></tr>'
+    + (rows.length ? rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${P(v)}</td></tr>`).join('') : '<tr><td colspan="2"><small>No operating expenses recorded for this period.</small></td></tr>')
+    + `<tr style="font-weight:700"><td>Total operating expenses</td><td>${P(total)}</td></tr></table></div>`;
+}
+// Live POS wins: drop imported history days that also have live sales, so no day is counted twice
+const liveFirst = (hs, rows) => { const live = new Set(rows.map(s => day(new Date(s.paid_at)))); return hs.filter(h => !live.has(h.day)); };
+// Source transparency: how much of the period is imported history vs live POS, and days that are in both (display only)
+function srcNote(rows, hist) {
+  if (!hist.length) return '';
+  const used = liveFirst(hist, rows), h = hcalc(used), l = calc(rows), both = hist.filter(x => !used.includes(x)).map(x => x.day).sort();
+  return `<div style="color:#777;margin-bottom:8px">Imported Loyverse history: ${used.length} day${used.length === 1 ? '' : 's'}, Net ${P(h.net)}, COGS ${P(h.cost)}<br>Live POS: Net ${P(l.net)}, COGS ${P(l.cost)}</div>`
+    + (both.length ? `<div style="background:#fff4d6;padding:8px;border-radius:8px;margin-bottom:8px">⚠ These days are in both imported history and live sales. Live POS sales are used and the imported history for these days is left out: ${both.join(', ')}</div>` : '');
+}
+function drawReport() {
+  const { rows, hist, from, to, cur, prev, days } = last, g = $('grp').value, ok = rows.filter(s => !s.voided);
+  drawPL(); drawHealth(); drawOX();
+  $('stats').innerHTML = Object.keys(MET).map(k => { const d = cur[k] - prev[k], pct = prev[k] ? d / Math.abs(prev[k]) * 100 : null,
+    col = k === 'refunds' || k === 'disc' ? '#777' : d >= 0 ? '#2a8a2a' : '#c33';
+    return `<div class="card" data-m="${k}" style="cursor:pointer;${k === met ? 'border-bottom:3px solid #8b5e3c' : ''}"><small>${MET[k]}</small><div class="big">${P(cur[k])}</div>
+      <small style="color:${col}">${d >= 0 ? '+' : '-'}${P(Math.abs(d))}${pct === null ? '' : ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`}</small></div>`; }).join('');
+  $('stats').querySelectorAll('[data-m]').forEach(x => x.onclick = () => { met = x.dataset.m; drawReport(); });
+  $('cmp').textContent = `${cur.orders} orders · compared with the previous ${days} day${days > 1 ? 's' : ''} · profit counts only items with a cost`;
+  $('srcBox').innerHTML = (last.histErr ? `<div style="background:#fff4d6;padding:8px;border-radius:8px;margin-bottom:8px">⚠ Imported Loyverse history could not be loaded. Report totals may be incomplete. <small>(${esc(last.histErr.message)})</small></div>` : '') + srcNote(rows, last.histAll);
+  const groups = new Map(); rows.forEach(s => { const k = bkey(new Date(s.paid_at), g); (groups.get(k) || groups.set(k, []).get(k)).push(s); });
+  const hg = new Map(); hist.forEach(h => { const k = bkey(new Date(h.day + 'T00:00:00'), g); (hg.get(k) || hg.set(k, []).get(k)).push(h); });
+  const keys = new Map(), d = new Date(from); while (d < to) { keys.set(bkey(d, g)); d.setDate(d.getDate() + 1); }
+  const tbl = [...keys.keys()].map(k => ({ k, label: blab(k, g), c: addc(calc(groups.get(k) || []), hcalc(hg.get(k) || [])) }));
+  $('chTitle').textContent = MET[met]; $('chart').innerHTML = chart(tbl.map(r => ({ label: r.label, v: r.c[met] })));
+  const f = v => v.toFixed(2); last.tbl = tbl; drawBW();
+  $('brk').innerHTML = '<table><tr><th>Date</th><th>Gross sales</th><th>Refunds</th><th>Discounts</th><th>Net sales</th><th>Gross profit</th></tr>' + [...tbl].reverse().map(r =>
+    `<tr><td>${r.label}</td><td>${P(r.c.gross)}</td><td>${P(r.c.refunds)}</td><td>${P(r.c.disc)}</td><td>${P(r.c.net)}</td><td>${P(r.c.profit)}</td></tr>`).join('') + '</table>';
+  const top = {}; ok.forEach(s => s.sale_items.forEach(l => { const k = l.item_name + ' ' + (l.size || ''); top[k] = (top[k] || 0) + l.qty; }));
+  $('top').innerHTML = '<table>' + Object.entries(top).sort((a, b) => b[1] - a[1]).map(([k, q]) => `<tr><td>${esc(k)}</td><td>${q}</td></tr>`).join('') + '</table>';
+  const hrs = Array(24).fill(0); ok.forEach(s => hrs[new Date(s.paid_at).getHours()] += +s.total); const mx = Math.max(...hrs, 1);
+  $('hours').innerHTML = hrs.map((v, h) => v ? `<div style="display:flex;gap:6px;align-items:center;margin:2px 0"><span style="width:64px">${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}</span><div style="background:#8b5e3c;height:14px;width:${v / mx * 55}%"></div><span>${P(v)}</span></div>` : '').join('') || 'No sales.';
+  $('list').innerHTML = '<table>' + rows.map(s => `<tr style="${s.voided ? 'opacity:.4' : ''}"><td>${new Date(s.paid_at).toLocaleString()}</td>
+    <td>${P(s.total)}</td><td>${esc(s.payment_type)}</td><td>${s.voided ? 'voided' : `<button data-id="${s.id}">Void</button>`}</td></tr>`).join('') + '</table>';
+  $('list').querySelectorAll('button').forEach(b => b.onclick = async () => {
+    if (!confirm('Void this sale?')) return;
+    await db.from('sales').update({ voided: true }).eq('id', b.dataset.id); loadReport(); });
+}
+$('csv').onclick = () => { if (!last) return;
+  const csv = ['Date,Gross sales,Refunds,Discounts,Net sales,Gross profit', ...last.tbl.map(r => [r.k, r.c.gross, r.c.refunds, r.c.disc, r.c.net, r.c.profit].map(v => typeof v === 'number' ? v.toFixed(2) : v).join(','))].join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `sales-${$('from').value}-to-${$('to').value}.csv`; a.click(); };
+// Sales detail: one row per sold item, from the sales the Report already loaded (same date range and time-of-day filter)
+const cq = v => /[",\n]/.test(v = v == null ? '' : String(v)) ? '"' + v.replace(/"/g, '""') + '"' : v;
+const detailCSV = rows => ['Sale ID,Paid Date/Time,Item,Size,Quantity,Unit Price,Line Total,Sale Subtotal,Discount,Sale Total,Payment Method,Payment Reference,Voided',
+  ...rows.flatMap(s => { const d = new Date(s.paid_at), sale = [s.id, day(d) + ' ' + d.toTimeString().slice(0, 5)], tail = [(+s.subtotal).toFixed(2), (+s.discount).toFixed(2), (+s.total).toFixed(2), payLabel(s.payment_type), s.payment_ref || '', s.voided ? 'Yes' : 'No'];
+    return (s.sale_items.length ? s.sale_items : [null]).map(l => [...sale, ...(l ? [l.item_name, l.size || '', +l.qty, (+l.unit_price).toFixed(2), (l.qty * l.unit_price).toFixed(2)] : ['', '', '', '', '']), ...tail].map(cq).join(',')); })].join('\n');
+$('csvD').onclick = () => { if (!last) return;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + detailCSV(last.rows)], { type: 'text/csv' })); a.download = `sales-detail-${$('from').value}-to-${$('to').value}.csv`; a.click(); };
+// Expense detail: every recorded expense in the Report's date range (all categories), one row each
+const expCSV = rows => ['Expense ID,Date,Category,Expense Name,Amount,Payment Method,Vendor,Reference No.,Notes',
+  ...rows.map(e => [e.id, e.expense_date, e.category, e.name, (+e.amount).toFixed(2), e.payment_method, e.vendor, e.reference_no, e.notes].map(cq).join(','))].join('\n');
+$('csvX').onclick = async () => { const f = $('from').value, t = $('to').value;
+  const r = await db.from('expenses').select('*').gte('expense_date', f).lte('expense_date', t).order('expense_date', { ascending: false }).order('id', { ascending: false });
+  if (r.error) return alert(r.error.message);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + expCSV(r.data)], { type: 'text/csv' })); a.download = `expense-detail-${f}-to-${t}.csv`; a.click(); };
+// Purchase detail: one row per purchase line, every status, by purchase_date in the Report's range. Pack size is the ingredient's current one.
+const purCSV = rows => ['Purchase ID,Purchase Date,Supplier,Status,Ingredient,Packs,Pack Size,Pack Price,Line Total,Extra Costs,Purchase Total,Notes',
+  ...rows.flatMap(p => (p.purchase_lines.length ? p.purchase_lines : [null]).map(l => [p.id, p.purchase_date, (p.suppliers || {}).name, p.status,
+    ...(l ? [(l.ingredients || {}).name, +l.packs, l.ingredients ? +l.ingredients.pack_size : '', (+l.pack_price).toFixed(2), (l.packs * l.pack_price).toFixed(2)] : ['', '', '', '', '']),
+    (+p.extra_costs).toFixed(2), (+p.total).toFixed(2), p.notes].map(cq).join(',')))].join('\n');
+$('csvP').onclick = async () => { const f = $('from').value, t = $('to').value;
+  const r = await db.from('purchases').select('*, suppliers(name), purchase_lines(packs, pack_price, ingredients(name, pack_size))').gte('purchase_date', f).lte('purchase_date', t).order('purchase_date', { ascending: false }).order('id', { ascending: false });
+  if (r.error) return alert(r.error.message);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + purCSV(r.data)], { type: 'text/csv' })); a.download = `purchase-detail-${f}-to-${t}.csv`; a.click(); };
+// Stock movements: every stock_moves row whose created_at falls in the Report's dates (paged, 1000 rows per request)
+const moveCSV = rows => ['Move ID,Date/Time,Ingredient,Unit,Change,Reason,Note', ...rows.map(m => { const d = new Date(m.created_at), g = m.ingredients || {}, v = +(+m.delta).toFixed(4);
+  return [m.id, day(d) + ' ' + d.toTimeString().slice(0, 5), g.name, g.unit, (v > 0 ? '+' : '') + v, m.reason, m.note].map(cq).join(','); })].join('\n');
+async function fetchMoves(f, t) {
+  const from = new Date(f + 'T00:00:00'), to = new Date(t + 'T00:00:00'); to.setDate(to.getDate() + 1);
+  let rows = [], p = 0;
+  while (true) {
+    const { data, error } = await db.from('stock_moves').select('id, created_at, delta, reason, note, ingredients(name, unit)').gte('created_at', from.toISOString())
+      .lt('created_at', to.toISOString()).order('created_at', { ascending: false }).order('id', { ascending: false }).range(p * 1000, p * 1000 + 999);
+    if (error) { alert(error.message); return null; }
+    rows = rows.concat(data); if (data.length < 1000) break; p++;
+  }
+  return rows;
+}
+$('csvM').onclick = async () => { const f = $('from').value, t = $('to').value, rows = await fetchMoves(f, t); if (!rows) return;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + moveCSV(rows)], { type: 'text/csv' })); a.download = `stock-movement-${f}-to-${t}.csv`; a.click(); };
+let rcpts = [], rSel = null;
+async function loadReceipts() {
+  const r = await db.from('sales').select('*, sale_items(*)').eq('status', 'paid').order('paid_at', { ascending: false }).limit(300);
+  if (r.error) return alert(r.error.message); rcpts = r.data;
+  if (!rSel || !rcpts.find(s => s.id == rSel)) rSel = rcpts[0] && rcpts[0].id; drawReceipts();
+}
+function drawReceipts() {
+  let lastDay = '', html = '';
+  rcpts.forEach(s => { const d = new Date(s.paid_at).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    if (d !== lastDay) { html += `<div style="color:#8b5e3c;padding:10px 4px;font-weight:600">${d}</div>`; lastDay = d; }
+    html += `<div class="line" data-rc="${s.id}" style="cursor:pointer;padding:10px 6px;border-bottom:1px solid #eee;${s.id == rSel ? 'background:#f4f1ec;' : ''}${s.voided ? 'opacity:.45;' : ''}"><span><b>${P(s.total)}</b><br><small>${tm(s.paid_at)} · ${esc(payLabel(s.payment_type))}${s.voided ? ' · refunded' : ''}</small></span><small>#${s.id}</small></div>`; });
+  const s = rcpts.find(x => x.id == rSel);
+  const detail = !s ? 'No receipts yet.' : `<div style="text-align:center;margin-bottom:8px"><div style="font-size:2em">${P(s.total)}</div><small>Total</small></div><hr>
+    <div class="row"><span>${esc(s.dining_option)}</span><span>${esc(s.customer_name || '')}</span></div><hr>
+    ${s.sale_items.map(l => `<div class="row"><span>${esc(l.item_name)} ${esc(l.size)}<br><small>${+l.qty} × ${P(l.unit_price)}</small></span><span>${P(l.qty * l.unit_price)}</span></div>`).join('')}<hr>
+    ${+s.discount ? `<div class="row"><span>Discount</span><span>-${P(s.discount)}</span></div>` : ''}<div class="row big"><span>Total</span><span>${P(s.total)}</span></div>
+    <div class="row"><span>Payment</span><span>${esc(payLabel(s.payment_type))}</span></div>
+    ${s.payment_type === 'cash' ? `<div class="row"><span>Cash</span><span>${P(s.cash_received)}</span></div><div class="row"><span>Change</span><span>${P(s.change_given)}</span></div>` : s.payment_ref ? `<div class="row"><span>Reference No.</span><span>${esc(s.payment_ref)}</span></div>` : ''}<hr>
+    <div class="row"><small>Ordered ${new Date(s.created_at).toLocaleString()}</small><small>#${s.id}</small></div><div class="row"><small>Paid ${new Date(s.paid_at).toLocaleString()}</small></div>
+    ${s.voided ? '<p><b>Refunded</b></p>' : '<button id="rcRefund" style="width:100%;margin-top:8px">Refund</button>'}`;
+  $('rcptBody').innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"><div style="max-height:75vh;overflow:auto">${html || 'No receipts yet.'}</div><div class="card" style="border:1px solid #ddd;align-self:start">${detail}</div></div>`;
+  $('rcptBody').querySelectorAll('[data-rc]').forEach(x => x.onclick = () => { rSel = x.dataset.rc; drawReceipts(); });
+  if ($('rcRefund')) $('rcRefund').onclick = async () => { if (!confirm('Refund this receipt?')) return;
+    const r = await db.from('sales').update({ voided: true }).eq('id', s.id); if (r.error) return alert(r.error.message); loadReceipts(); };
+}
+async function loadShift() {
+  const [o, h] = await Promise.all([db.from('shifts').select('*').is('closed_at', null).order('id', { ascending: false }).limit(1),
+    db.from('shifts').select('*').not('closed_at', 'is', null).order('id', { ascending: false }).limit(30)]);
+  const e = o.error || h.error; if (e) return alert(e.message);
+  const sh = o.data[0], hist = '<h3>Past shifts</h3><div style="overflow-x:auto"><table><tr><th>#</th><th>Opened</th><th>Closed</th><th>Expected</th><th>Counted</th><th>Difference</th></tr>' +
+    h.data.map(x => `<tr><td>${x.id}</td><td>${new Date(x.opened_at).toLocaleString()}</td><td>${new Date(x.closed_at).toLocaleString()}</td><td>${P(x.expected_cash)}</td><td>${P(x.counted_cash)}</td><td>${P(x.counted_cash - x.expected_cash)}</td></tr>`).join('') + '</table></div>';
+  if (!sh) {
+    $('shiftBody').innerHTML = '<h3 style="margin-top:0">No shift is open</h3><div class="tabs"><input id="sStart" type="number" min="0" step="any" placeholder="Starting cash (₱)"><button class="pri" id="sOpen">Open shift</button></div>' + hist;
+    $('sOpen').onclick = async () => { const r = await db.from('shifts').insert({ starting_cash: num($('sStart').value) }); if (r.error) return alert(r.error.message); loadShift(); }; return;
+  }
+  const [sl, mv] = await Promise.all([db.from('sales').select('*').eq('status', 'paid').gte('paid_at', sh.opened_at), db.from('cash_moves').select('*').eq('shift_id', sh.id).order('id')]);
+  const e2 = sl.error || mv.error; if (e2) return alert(e2.message);
+  const ok = sl.data.filter(s => !s.voided), rf = sl.data.filter(s => s.voided), sum = (a, f) => a.reduce((t, x) => t + +f(x), 0), cash = s => s.payment_type === 'cash' ? s.total : 0,
+    pin = sum(mv.data.filter(m => m.kind === 'in'), m => m.amount), pout = sum(mv.data.filter(m => m.kind === 'out'), m => m.amount),
+    cashPay = sum(sl.data, cash), cashRef = sum(rf, cash), expected = +sh.starting_cash + cashPay - cashRef + pin - pout;
+  const row = (a, v, b) => `<div class="row"${b ? ' style="font-weight:700"' : ''}><span>${a}</span><span>${P(v)}</span></div>`;
+  $('shiftBody').innerHTML = `<h3 style="margin-top:0">Shift #${sh.id}</h3><small>Opened ${new Date(sh.opened_at).toLocaleString()}</small>
+   <h4>Cash drawer</h4>${row('Starting cash', sh.starting_cash)}${row('Cash payments', cashPay)}${row('Cash refunds', cashRef)}${row('Paid in', pin)}${row('Paid out', pout)}${row('Expected cash amount', expected, 1)}
+   <h4>Sales summary</h4>${row('Gross sales', sum(sl.data, s => s.subtotal))}${row('Refunds', sum(rf, s => s.subtotal))}${row('Discounts', sum(ok, s => s.discount))}${row('Net sales', sum(ok, s => s.total), 1)}${row('Cash', sum(ok, cash))}${row('GCash', sum(ok, s => s.payment_type === 'gcash' ? s.total : 0))}${row('Bank Transfer', sum(ok, s => s.payment_type === 'bank' ? s.total : 0))}
+   <h4>Cash management</h4><div class="tabs"><select id="cmKind"><option value="in">Paid in</option><option value="out">Paid out</option></select><input id="cmAmt" type="number" min="0" step="any" placeholder="Amount" style="width:110px"><input id="cmNote" placeholder="Note, e.g. bought ice" style="flex:1"><button id="cmAdd">Add</button></div>
+   ${mv.data.map(m => `<div class="row"><span>${m.kind === 'in' ? 'Paid in' : 'Paid out'} · ${esc(m.note || '')}<br><small>${new Date(m.created_at).toLocaleString()}</small></span><span>${m.kind === 'out' ? '-' : ''}${P(m.amount)}</span></div>`).join('')}
+   <h4>Close shift</h4><div class="tabs"><input id="sCount" type="number" min="0" step="any" placeholder="Cash counted in drawer (₱)"><button class="pri" id="sClose">Close shift</button></div>` + hist;
+  $('cmAdd').onclick = async () => { const a = num($('cmAmt').value); if (!(a > 0)) return alert('Enter an amount.');
+    const r = await db.from('cash_moves').insert({ shift_id: sh.id, kind: $('cmKind').value, amount: a, note: $('cmNote').value.trim() || null }); if (r.error) return alert(r.error.message); loadShift(); };
+  $('sClose').onclick = async () => { if ($('sCount').value === '') return alert('Enter the cash you counted.'); const c = num($('sCount').value);
+    if (!confirm(`Expected ${P(expected)}, counted ${P(c)} (${c - expected >= 0 ? 'over' : 'short'} by ${P(Math.abs(c - expected))}). Close this shift?`)) return;
+    const r = await db.from('shifts').update({ closed_at: new Date().toISOString(), expected_cash: expected, counted_cash: c }).eq('id', sh.id); if (r.error) return alert(r.error.message); loadShift(); };
+}
+let discounts = [], discSel = null;
+async function loadDiscounts() {
+  const r = await db.from('discounts').select('*').eq('active', true).order('name'); if (r.error) return console.warn(r.error.message);
+  discounts = r.data; const keep = $('discSel').value, lab = d => d.kind === 'percent' ? +d.value + '%' : P(d.value);
+  $('discSel').innerHTML = '<option value="">None / custom amount</option>' + discounts.map(d => `<option value="${d.id}">${esc(d.name)} (${lab(d)})</option>`).join(''); $('discSel').value = keep;
+  $('discList').innerHTML = discounts.length ? '<table>' + discounts.map(d => `<tr><td>${esc(d.name)}</td><td>${lab(d)}</td><td><button data-dx="${d.id}">Delete</button></td></tr>`).join('') + '</table>' : '<small>No saved discounts yet.</small>';
+  $('discList').querySelectorAll('[data-dx]').forEach(x => x.onclick = async () => { if (!confirm('Delete this discount?')) return;
+    const r = await db.from('discounts').delete().eq('id', x.dataset.dx); if (r.error) return alert(r.error.message); loadDiscounts(); });
+}
+$('dAdd').onclick = async () => {
+  const v = num($('dVal').value), n = $('dName').value.trim(); if (!n || !(v > 0)) return alert('Enter a name and a value.');
+  if ($('dKind').value === 'percent' && v > 100) return alert('A percent discount cannot be more than 100.');
+  const r = await db.from('discounts').insert({ name: n, kind: $('dKind').value, value: v }); if (r.error) return alert(r.error.message);
+  $('dName').value = ''; $('dVal').value = ''; loadDiscounts();
+};
+$('discSel').onchange = () => { discSel = discounts.find(d => d.id == $('discSel').value) || null; $('disc').disabled = !!discSel; if (!discSel) $('disc').value = ''; renderCart(); };
+const hcalc = hs => { const o = { gross: 0, refunds: 0, disc: 0, net: 0, cost: 0, orders: 0 };
+  hs.forEach(h => { o.gross += +h.gross; o.refunds += +h.refunds; o.disc += +h.discounts; o.net += +h.net; o.cost += +h.cost; }); o.profit = o.net - o.cost; return o; };
+const addc = (a, b) => { const o = {}; for (const k in a) o[k] = a[k] + b[k]; return o; };
+// Inventory purchases are not operating expenses: ingredients and packaging become stock and reach COGS when sold.
+const INV_EXP_CATS = ['Ingredients / Raw Materials', 'Packaging'];
+async function fetchExp(from, to, byCat) {
+  if ($('tod').value !== '0-24') return 0;
+  const r = await db.from('expenses').select('category, amount').gte('expense_date', day(from)).lt('expense_date', day(to));
+  if (r.error) { console.warn(r.error.message); return 0; }
+  const ox = r.data.filter(e => !INV_EXP_CATS.includes(e.category));
+  if (byCat) ox.forEach(e => byCat[e.category] = (byCat[e.category] || 0) + +e.amount);
+  return ox.reduce((t, e) => t + +e.amount, 0);
+}
+const plCalc = (c, opex) => ({ net_sales: c.net, cogs: c.cost, gross_profit: c.net - c.cost, operating_expenses: opex, net_profit: c.net - c.cost - opex });
+// Business Health KPIs, derived only from the P&L values (percent of net sales; 0 when there are no net sales)
+const calcHealth = (p, days) => { const pct = v => p.net_sales > 0 ? v / p.net_sales * 100 : 0;
+  return { gross_margin: pct(p.gross_profit), cogs_pct: pct(p.cogs), opex_pct: pct(p.operating_expenses), net_margin: pct(p.net_profit), avg_daily_sales: days > 0 ? p.net_sales / days : 0 }; };
+async function fetchHist(from, to) {
+  if ($('tod').value !== '0-24') return [];
+  const r = await db.from('history_days').select('*').gte('day', day(from)).lt('day', day(to)); return r.error ? { error: r.error } : r.data;
+}
+let hRows = [], hUse = [];
+const parseCSV = t => { const out = []; let row = [], f = '', q = false;
+  for (let i = 0; i < t.length; i++) { const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true; else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; row.push(f); f = ''; if (row.length > 1 || row[0] !== '') out.push(row); row = []; }
+    else f += c; }
+  if (f !== '' || row.length) { row.push(f); out.push(row); } return out; };
+const parseDay = t => { const m = t.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) return `${m[3].length === 2 ? 2000 + +m[3] : +m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; return /^\d{4}-\d\d-\d\d/.test(t) ? t.slice(0, 10) : null; };
+$('hFiles').onchange = async () => {
+  const map = new Map(); let bad = 0;
+  for (const f of $('hFiles').files) { const rows = parseCSV(await f.text()), h = (rows[0] || []).map(x => x.trim().toLowerCase()), ix = n => h.indexOf(n);
+    if (ix('date') < 0 || ix('net sales') < 0) { bad++; continue; }
+    rows.slice(1).forEach(r => { const d = parseDay(r[ix('date')] || ''); if (!d) return; const n = k => parseFloat(r[ix(k)]) || 0;
+      if (!n('gross sales') && !n('net sales') && !n('refunds')) return;
+      map.set(d, { day: d, gross: n('gross sales'), refunds: n('refunds'), discounts: n('discounts'), net: n('net sales'), cost: n('cost of goods'), source: 'loyverse' }); }); }
+  hRows = [...map.values()].sort((a, b) => a.day < b.day ? -1 : 1); hPreview(bad);
+};
+async function hPreview(bad) {
+  if (!$('hCut').value) { const r = await db.from('sales').select('paid_at').eq('status', 'paid').eq('voided', false).order('paid_at', { ascending: true }).limit(1);
+    if (r.error) { hUse = []; $('hGo').hidden = true; $('hPrev').innerHTML = `<b>⚠ Could not find your first live sale, so no cutoff was set: ${esc(r.error.message)}</b><br>Enter the "Only import days before" date yourself, or try again.`; return; }
+    $('hCut').value = r.data && r.data[0] ? day(new Date(r.data[0].paid_at)) : day(new Date(Date.now() + 864e5)); }
+  hUse = hRows.filter(r => r.day < $('hCut').value); const sm = k => hUse.reduce((t, r) => t + r[k], 0);
+  $('hPrev').innerHTML = (hRows.length ? `<b>${hUse.length} days</b> will be imported (${hUse.length ? hUse[0].day + ' to ' + hUse[hUse.length - 1].day : 'none'}); ${hRows.length - hUse.length} later days are skipped.<br>Net sales ${P(sm('net'))} · cost ${P(sm('cost'))} · profit ${P(sm('net') - sm('cost'))}` : 'No sales days found in those files.')
+    + (bad ? `<br><b>${bad} file(s) skipped: not a daily Sales summary.</b>` : '');
+  $('hGo').hidden = !hUse.length;
+}
+$('hCut').onchange = () => hRows.length && hPreview(0);
+$('hGo').onclick = async () => {
+  if (!confirm(`Import ${hUse.length} days of history? Days that were imported before will be replaced.`)) return;
+  for (let i = 0; i < hUse.length; i += 200) { const r = await db.from('history_days').upsert(hUse.slice(i, i + 200)); if (r.error) return alert(r.error.message); }
+  alert('History imported.'); $('hFiles').value = ''; hRows = []; hUse = []; $('hGo').hidden = true; $('hPrev').textContent = ''; loadReport();
+};
+// ---- Loyverse Receipt Log: PREVIEW ONLY. Reads the chosen file; no database calls, nothing is saved. ----
+const RL_COLS = { 'sale date': 'date', 'sale time': 'time', 'receipt no.': 'receipt', 'employee': 'employee', 'pos': 'pos', 'order type': 'order_type', 'payment method': 'payment',
+  'item / flavor': 'item', 'sku': 'sku', 'category': 'category', 'size / variant': 'size', 'quantity': 'qty', 'unit price': 'unit_price', 'line total': 'line_total',
+  'receipt total': 'receipt_total', 'amount tendered': 'tendered', 'change': 'change', 'order ticket': 'ticket' };
+const RL_REQ = ['date', 'time', 'receipt', 'item', 'qty', 'unit_price', 'line_total'];
+const RL_NAMES = { date: 'Sale Date', time: 'Sale Time', receipt: 'Receipt No.', item: 'Item / Flavor', qty: 'Quantity', unit_price: 'Unit Price', line_total: 'Line Total',
+  receipt_total: 'Receipt Total', tendered: 'Amount Tendered', change: 'Change' };
+const RL_MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const rlHead = h => h.replace(/^﻿/, '').trim().toLowerCase().replace(/\s*\(php\)$/, '').replace(/\s+/g, ' ');
+// Same rules as parseCSV, but each record keeps the CSV row it starts on, and an unclosed quote is reported
+const rlCSV = t => { const out = []; let row = [], f = '', q = false, line = 1, start = 1;
+  const end = () => { row.push(f); f = ''; if (row.some(x => x.trim() !== '')) out.push({ n: start, cells: row }); row = []; };
+  for (let i = 0; i < t.length; i++) { const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else { if (c === '\n') line++; f += c; } }
+    else if (c === '"') q = true; else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; end(); start = ++line; }
+    else f += c; }
+  if (q) return { error: `Malformed CSV: the quote that starts on row ${start} is never closed.` };
+  end(); return { rows: out }; };
+const rlDate = s => { let y, m, d, x;
+  if ((x = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) { y = +x[1]; m = +x[2]; d = +x[3]; }
+  else if ((x = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) { m = +x[1]; d = +x[2]; y = +x[3]; }   // month first, like the daily importer
+  else if ((x = s.match(/^([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/))) { m = RL_MON.indexOf(x[1].toLowerCase()) + 1; d = +x[2]; y = +x[3]; }
+  else return null;
+  const dt = new Date(y, m - 1, d); return m > 0 && dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d ? day(dt) : null; };
+const rlTime = s => { const x = s.match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?\s*([AaPp][Mm])?$/); if (!x) return null; let h = +x[1];
+  if (x[4]) { if (h < 1 || h > 12) return null; h = h % 12 + (/p/i.test(x[4]) ? 12 : 0); } else if (h > 23) return null;
+  return String(h).padStart(2, '0') + ':' + x[2] + ':' + (x[3] || '00'); };
+const rlNum = s => { const v = s.replace(/₱/g, '').replace(/\s/g, ''); return /^-?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/.test(v) ? +v.replace(/,/g, '') : null; };
+function rlCheck(text) {
+  const res = { rows: 0, errors: [], warnings: [], lines: [], receipts: new Map(), days: new Map(), ready: false }, err = (n, m) => res.errors.push({ n, m }), warn = (n, m) => res.warnings.push({ n, m });
+  if (!text.trim()) { err(null, 'The file is empty.'); return res; }
+  const p = rlCSV(text); if (p.error) { err(null, p.error); return res; }
+  if (!p.rows.length) { err(null, 'No header row found. Please select a valid Receipt Log CSV.'); return res; }   // e.g. a file of only commas
+  const [head, ...rows] = p.rows, ix = {}; res.rows = rows.length;
+  head.cells.forEach((h, i) => { const k = RL_COLS[rlHead(h)]; if (k && !(k in ix)) ix[k] = i; });
+  const miss = RL_REQ.filter(k => !(k in ix)); if (miss.length) { err(head.n, 'Missing required column(s): ' + miss.map(k => RL_NAMES[k]).join(', ')); return res; }
+  if (!rows.length) { err(null, 'The file has headers but no data rows.'); return res; }
+  const today = day(new Date());
+  rows.forEach(({ n, cells }) => { const g = k => k in ix ? (cells[ix[k]] || '').trim() : '', bad = [];
+    const L = { n, receipt: g('receipt'), item: g('item'), sku: g('sku'), size: g('size'), payment: g('payment'), date: rlDate(g('date')), time: rlTime(g('time')) };
+    if (!g('date')) bad.push('Sale Date is blank'); else if (!L.date) bad.push(`Sale Date "${g('date')}" is not a valid date`); else if (L.date > today) bad.push(`Sale Date ${L.date} is in the future`);
+    if (!g('time')) bad.push('Sale Time is blank'); else if (!L.time) bad.push(`Sale Time "${g('time')}" is not a valid time`);
+    if (!L.receipt) bad.push('Receipt No. is blank'); if (!L.item) bad.push('Item / Flavor is blank');
+    for (const k of ['qty', 'unit_price', 'line_total', 'receipt_total', 'tendered', 'change']) { const s = g(k); L[k] = s ? rlNum(s) : null;
+      if (!s && RL_REQ.includes(k)) bad.push(RL_NAMES[k] + ' is blank'); else if (s && L[k] === null) bad.push(`${RL_NAMES[k]} "${s}" is not a number`); }
+    if (L.qty === 0) bad.push('Quantity is 0');
+    else if (L.qty !== null && L.unit_price !== null && L.line_total !== null && Math.abs(L.qty * L.unit_price - L.line_total) > 0.01)
+      bad.push(`Quantity × Unit Price is ${+(L.qty * L.unit_price).toFixed(2)} but Line Total is ${L.line_total}`);
+    if (bad.length) return bad.forEach(m => err(n, m));
+    let r = res.receipts.get(L.receipt); if (!r) res.receipts.set(L.receipt, r = { no: L.receipt, date: L.date, time: L.time, n, lines: [], sum: 0, totals: [] });
+    if (L.date !== r.date) return err(n, `Receipt ${L.receipt} has lines on different dates (${r.date} and ${L.date})`);
+    if (L.time !== r.time) warn(n, `Receipt ${L.receipt} has lines with different times (${r.time.slice(0, 5)} and ${L.time.slice(0, 5)})`);
+    r.lines.push(L); L.line_no = r.lines.length; r.sum += L.line_total; if (L.receipt_total !== null) r.totals.push(L.receipt_total);
+    res.lines.push(L);
+    const d = res.days.get(L.date) || res.days.set(L.date, { date: L.date, qty: 0, sales: 0, rc: new Set() }).get(L.date); d.qty += L.qty; d.sales += L.line_total; d.rc.add(L.receipt); });
+  // Receipt Total repeats on a receipt's lines: compare it ONCE per receipt with the sum of that receipt's line totals
+  for (const r of res.receipts.values()) { const t = [...new Set(r.totals)]; r.total = t.length === 1 ? t[0] : null;
+    if (t.length > 1) { r.status = 'error'; err(r.n, `Receipt ${r.no}: its lines show different Receipt Totals (${t.map(P).join(', ')})`); }
+    else if (!t.length) { r.status = 'no total'; warn(r.n, `Receipt ${r.no}: no Receipt Total to check against`); }
+    else if (Math.abs(t[0] - r.sum) > 0.01) { r.status = 'error'; err(r.n, `Receipt ${r.no}: Receipt Total is ${P(t[0])} but its lines add up to ${P(r.sum)}`); }
+    else r.status = 'ok'; }
+  res.ready = !res.errors.length && res.lines.length > 0; return res;
+}
+function rlDraw(name, res) {
+  const tbl = (h, rows) => '<div style="overflow-x:auto"><table><tr>' + h.map(x => `<th>${x}</th>`).join('') + '</tr>' + rows.join('') + '</table></div>';
+  const box = (bg, html) => `<div style="background:${bg};padding:8px;border-radius:8px;margin:6px 0">${html}</div>`;
+  const list = (a, label) => a.length ? `<b>${label}</b><br>` + a.slice(0, 100).map(e => (e.n ? `Row ${e.n}: ` : '') + esc(e.m)).join('<br>') + (a.length > 100 ? `<br>…and ${a.length - 100} more` : '') : '';
+  const days = [...res.days.values()].sort((a, b) => a.date < b.date ? -1 : 1), rc = [...res.receipts.values()];
+  $('rlPrev').innerHTML = box('#fff4d6', '<b>PREVIEW ONLY — Nothing has been saved to the database.</b>')
+    + `<div>File: <b>${esc(name)}</b> · ${res.rows} data rows parsed · ${res.lines.length} valid lines · ${res.receipts.size} receipts · <b>${res.errors.length} error${res.errors.length === 1 ? '' : 's'}</b> · ${res.warnings.length} warning${res.warnings.length === 1 ? '' : 's'}</div>`
+    + (res.ready ? box('#e6f4e6', `✓ No errors found: ${res.lines.length} lines in ${res.receipts.size} receipts passed every check. Importing is not available yet.`)
+      : box('#fde8e8', `✗ Not ready: ${res.errors.length} error${res.errors.length === 1 ? '' : 's'} must be fixed in the file before it can be imported.` + (res.lines.length ? ' Totals below include valid lines only.' : '')))
+    + (res.errors.length ? box('#fde8e8', list(res.errors, 'Errors')) : '') + (res.warnings.length ? box('#fff4d6', list(res.warnings, 'Warnings')) : '')
+    + (days.length ? '<h4>Daily summary</h4>' + tbl(['Date', 'Item quantity', 'Receipts', 'Line sales'], days.map(d => `<tr><td>${d.date}</td><td>${N(d.qty)}</td><td>${d.rc.size}</td><td>${P(d.sales)}</td></tr>`)
+        .concat(`<tr style="font-weight:700"><td>Total</td><td>${N(days.reduce((t, d) => t + d.qty, 0))}</td><td>${res.receipts.size}</td><td>${P(days.reduce((t, d) => t + d.sales, 0))}</td></tr>`)) : '')
+    + (rc.length ? '<h4>Receipt checks</h4>' + tbl(['Receipt', 'Date', 'Time', 'Lines', 'Lines total', 'Receipt Total', 'Check'], rc.slice(0, 200).map(r =>
+        `<tr><td>${esc(r.no)}</td><td>${r.date}</td><td>${r.time.slice(0, 5)}</td><td>${r.lines.length}</td><td>${P(r.sum)}</td><td>${r.total === null ? '—' : P(r.total)}</td><td>${r.status === 'ok' ? '✓' : r.status === 'error' ? '✗ mismatch' : 'not checked'}</td></tr>`)) : '')
+    + (res.lines.length ? `<h4>Sample lines (first ${Math.min(15, res.lines.length)} of ${res.lines.length})</h4>` + tbl(['Date', 'Time', 'Receipt', 'Item', 'SKU', 'Size', 'Qty', 'Unit price', 'Line total'], res.lines.slice(0, 15).map(l =>
+        `<tr><td>${l.date}</td><td>${l.time.slice(0, 5)}</td><td>${esc(l.receipt)}</td><td>${esc(l.item)}</td><td>${esc(l.sku)}</td><td>${esc(l.size)}</td><td>${N(l.qty)}</td><td>${P(l.unit_price)}</td><td>${P(l.line_total)}</td></tr>`)) : '');
+}
+$('rlFile').onchange = async () => { const f = $('rlFile').files[0]; if (!f) return $('rlPrev').innerHTML = ''; rlDraw(f.name, rlCheck(await f.text())); };
+// ---- Historical Receipt Entry: writes ONLY to history_sale_lines (source 'manual'). No live sales, stock, costs, shifts or reports. ----
+let hrRows = [], hrSaving = false;
+const hrBlank = () => ({ cat: '', item: '', sku: '', category: '', size: '', qty: '', price: '' });
+// Catalog link (reference only): a line is matched ONLY when the picker text exactly equals one catalog label (labels end in #id, so they are unique)
+const hrLabel = i => [i.name, i.size, i.category, i.sku ? 'SKU ' + i.sku : '', '#' + i.id].filter(Boolean).join(' · ') + (i.active ? '' : ' (hidden)');
+const hrMatch = r => { const v = (r.cat || '').trim(); return v ? allItems.find(i => hrLabel(i) === v) || null : null; };
+const hrCatFill = () => { $('hrCatList').innerHTML = allItems.map(i => `<option value="${esc(hrLabel(i))}"></option>`).join(''); };
+const hrStatus = r => { const m = hrMatch(r); return m ? `<span style="color:#2a8a2a">✓ Catalog #${m.id}${m.active ? '' : ' (hidden item)'}</span>`
+  : (r.cat || '').trim() ? '<span style="color:#c33">No exact catalog match: will be saved as unmatched</span>' : '<span style="color:#777">Unmatched (historical item)</span>'; };
+const hrAmt = v => { v = String(v ?? '').trim(); if (v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : NaN; };   // null = blank, NaN = not a number
+const hrLineTotal = r => { const q = hrAmt(r.qty), p = hrAmt(r.price); return q === null || p === null || Number.isNaN(q) || Number.isNaN(p) ? null : Math.round(q * p * 100) / 100; };
+const hrUsed = rows => rows.map((r, i) => ({ r, n: i + 1 })).filter(x => Object.values(x.r).some(v => String(v).trim() !== ''));   // fully blank rows are ignored
+function hrSumUp() {
+  const s = hrRows.reduce((t, r) => t + (hrLineTotal(r) || 0), 0); $('hrSum').textContent = P(s);
+  hrRows.forEach((r, i) => { const c = $('hrLt' + i); if (c) { const v = hrLineTotal(r); c.textContent = v === null ? '—' : P(v); } });
+  const rt = hrAmt($('hrTotal').value);
+  $('hrCmp').innerHTML = rt === null || Number.isNaN(rt) ? '' : Math.abs(rt - s) <= 0.01 ? '<small style="color:#2a8a2a">✓ Receipt total matches the sum of the line totals.</small>'
+    : `<small style="color:#c33">Receipt total ${P(rt)} differs from the sum of the line totals by ${P(Math.abs(rt - s))}. Check the receipt (for example a discount). Nothing is changed automatically.</small>`;
+  return s;
+}
+function hrDraw() {
+  hrCatFill();
+  $('hrLines').innerHTML = '<table><tr><th>#</th><th>Catalog item</th><th>Item *</th><th>SKU</th><th>Category</th><th>Size</th><th>Qty *</th><th>Unit price *</th><th>Line total</th><th></th></tr>' + hrRows.map((r, i) => `<tr><td>${i + 1}</td>`
+    + `<td style="white-space:nowrap"><input data-hrc="${i}" list="hrCatList" value="${esc(r.cat)}" placeholder="Search catalog…" style="width:250px"> <button type="button" data-hrcx="${i}" aria-label="Clear catalog link ${i + 1}">Clear</button><br><small id="hrSt${i}">${hrStatus(r)}</small></td>`
+    + ['item', 'sku', 'category', 'size'].map(k => `<td><input data-hr="${i}" data-k="${k}" value="${esc(r[k])}" style="width:${k === 'item' ? 170 : 100}px"></td>`).join('')
+    + ['qty', 'price'].map(k => `<td><input data-hr="${i}" data-k="${k}" type="number" min="0" step="any" value="${esc(r[k])}" style="width:90px"></td>`).join('')
+    + `<td id="hrLt${i}"></td><td><button type="button" data-hrx="${i}" aria-label="Remove item ${i + 1}">✕</button></td></tr>`).join('') + '</table>';
+  $('hrLines').querySelectorAll('[data-hr]').forEach(x => x.oninput = () => { hrRows[x.dataset.hr][x.dataset.k] = x.value; hrSumUp(); });
+  $('hrLines').querySelectorAll('[data-hrx]').forEach(x => x.onclick = () => { hrRows.splice(+x.dataset.hrx, 1); if (!hrRows.length) hrRows.push(hrBlank()); hrDraw(); });
+  // picking a catalog item fills ONLY empty fields; text already typed from the printed receipt is never overwritten
+  $('hrLines').querySelectorAll('[data-hrc]').forEach(x => { x.onfocus = hrCatFill; x.oninput = () => { const r = hrRows[x.dataset.hrc], m = (r.cat = x.value, hrMatch(r));
+    if (!m) return $('hrSt' + x.dataset.hrc).innerHTML = hrStatus(r);
+    for (const [k, v] of [['item', m.name], ['sku', m.sku], ['category', m.category], ['size', m.size]]) if (!r[k].trim()) r[k] = v || '';
+    hrDraw(); }; });
+  $('hrLines').querySelectorAll('[data-hrcx]').forEach(x => x.onclick = () => { hrRows[x.dataset.hrcx].cat = ''; hrDraw(); });   // removes the link only; typed text stays
+  hrSumUp();
+}
+function hrValidate(h, rows, today) {
+  const e = [], used = hrUsed(rows);
+  if (!h.no) e.push('Enter the original receipt number.');
+  if (!h.date) e.push('Enter the original sale date.'); else if (h.date > today) e.push('The sale date cannot be in the future.');
+  if (!/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(h.time || '')) e.push('Enter the original sale time.');
+  if (!['sale', 'refund'].includes(h.type)) e.push('Choose Sale or Refund.');
+  for (const [k, l] of [['total', 'Receipt total'], ['tendered', 'Amount tendered'], ['change', 'Change given']])
+    if (Number.isNaN(h[k]) || h[k] < 0) e.push(`${l} must be a number of 0 or more, or left blank.`);
+  if (!used.length) e.push('Add at least one item.');
+  used.forEach(({ r, n }) => { const q = hrAmt(r.qty), p = hrAmt(r.price), w = `Item ${n}`;
+    if (!r.item.trim()) e.push(`${w}: enter the item name.`);
+    if (q === null) e.push(`${w}: enter the quantity.`); else if (Number.isNaN(q)) e.push(`${w}: the quantity is not a number.`);
+    else if (q === 0) e.push(`${w}: the quantity cannot be 0.`); else if (q < 0) e.push(`${w}: enter the quantity as a positive number (choose Receipt type "Refund" for refunds).`);
+    if (p === null) e.push(`${w}: enter the unit price.`); else if (Number.isNaN(p)) e.push(`${w}: the unit price is not a number.`); else if (p < 0) e.push(`${w}: enter the unit price as a positive number.`); });
+  return { errors: e, used };
+}
+// Receipt-level values repeat on every line (schema rule); they are never added up across lines
+const hrBuild = (h, used) => used.map(({ r }, i) => ({ source: 'manual', receipt_no: h.no, line_no: i + 1, sale_date: h.date, sale_time: h.time.length === 5 ? h.time + ':00' : h.time,
+  receipt_type: h.type, payment_method: h.pay || null, order_type: h.order || null, employee: h.emp || null, pos_name: h.pos || null,
+  item_name: r.item.trim(), sku: r.sku.trim() || null, category: r.category.trim() || null, size: r.size.trim() || null,
+  item_id: (hrMatch(r) || {}).id ?? null,   // catalog reference only; the text fields above keep the receipt as printed
+  qty: hrAmt(r.qty), unit_price: hrAmt(r.price), line_total: hrLineTotal(r), receipt_total: h.total, amount_tendered: h.tendered, change_given: h.change }));
+const hrWarnings = (h, sum) => { const w = [], tot = h.total ?? sum;
+  if (h.total !== null && Math.abs(h.total - sum) > 0.01) w.push(`Receipt total ${P(h.total)} differs from the sum of the line totals ${P(sum)}.`);
+  if (h.tendered !== null && h.tendered + 0.005 < tot) w.push(`Amount tendered ${P(h.tendered)} is less than the total ${P(tot)}.`);
+  if (h.tendered !== null && h.change !== null && Math.abs(h.tendered - tot - h.change) > 0.01) w.push(`Change given ${P(h.change)} is not tendered − total (${P(h.tendered - tot)}).`);
+  return w; };
+function hrReset() {
+  ['hrNo', 'hrDate', 'hrTime', 'hrOrder', 'hrEmp', 'hrPos', 'hrTotal', 'hrTendered', 'hrChange'].forEach(id => $(id).value = '');
+  $('hrType').value = 'sale'; $('hrPay').value = ''; hrRows = [hrBlank()]; hrDraw();
+}
+$('hrAdd').onclick = () => { hrRows.push(hrBlank()); hrDraw(); };
+$('hrTotal').oninput = hrSumUp;
+$('hrSave').onclick = async () => {
+  if (hrSaving) return;
+  const box = (bg, t) => `<div style="background:${bg};padding:8px;border-radius:8px">${t}</div>`, msg = t => $('hrMsg').innerHTML = t, bad = t => msg(box('#fde8e8', t));
+  const h = { no: $('hrNo').value.trim(), date: $('hrDate').value, time: $('hrTime').value, type: $('hrType').value, pay: $('hrPay').value,
+    order: $('hrOrder').value.trim(), emp: $('hrEmp').value.trim(), pos: $('hrPos').value.trim(),
+    total: hrAmt($('hrTotal').value), tendered: hrAmt($('hrTendered').value), change: hrAmt($('hrChange').value) };
+  const v = hrValidate(h, hrRows, day(new Date()));
+  if (v.errors.length) return bad('<b>Not saved. Please fix:</b><br>' + v.errors.map(esc).join('<br>'));
+  const lines = hrBuild(h, v.used), sum = lines.reduce((t, l) => t + l.line_total, 0), warn = hrWarnings(h, sum);
+  hrSaving = true; $('hrSave').disabled = true; msg('Checking…');
+  try {
+    let r = await db.from('history_sale_lines').select('id').eq('source', 'manual').eq('receipt_no', h.no).limit(1);
+    if (r.error) return bad('Could not check for an existing receipt, so nothing was saved: ' + esc(r.error.message));
+    if (r.data.length) return bad(`<b>Duplicate:</b> receipt ${esc(h.no)} was already entered. Nothing was saved, and the existing record was not changed.`);
+    if (!confirm(`Save historical receipt ${h.no} (${h.type === 'refund' ? 'Refund' : 'Sale'}) dated ${h.date} ${h.time.slice(0, 5)}?\n${lines.length} item line${lines.length > 1 ? 's' : ''}, sum of line totals ${P(sum)}.\n${lines.filter(l => l.item_id).length} matched to the catalog, ${lines.filter(l => !l.item_id).length} unmatched.`
+      + (warn.length ? '\n\nPlease check:\n- ' + warn.join('\n- ') : '') + '\n\nSaved receipts cannot be edited or deleted from the app.')) return msg('Not saved.');
+    msg('Saving…');
+    r = await db.from('history_sale_lines').insert(lines);   // one request: all lines are saved, or none
+    if (r.error) return bad(r.error.code === '23505' ? `<b>Duplicate:</b> receipt ${esc(h.no)} already exists. Nothing was saved.` : 'Save failed; nothing was saved: ' + esc(r.error.message));
+    hrReset(); msg(box('#e6f4e6', `✓ Historical receipt ${esc(h.no)} saved (${lines.length} line${lines.length > 1 ? 's' : ''}, ${P(sum)}). It is stored separately and is not shown in the current reports.`));
+  } catch (e) { bad('Save failed; nothing was saved: ' + esc(e.message || e)); }
+  finally { hrSaving = false; $('hrSave').disabled = false; }
+};
+hrRows = [hrBlank()]; hrDraw();
+let catRows = [];
+const allCats = () => [...new Set([...allItems.map(x => x.category), ...catRows])].sort((a, b) => a.localeCompare(b));
+async function loadCats() { const r = await db.from('categories').select('name'); catRows = r.error ? [] : r.data.map(x => x.name); renderItems(); }
+function drawCats() {
+  const n = c => allItems.filter(i => i.category === c).length, cs = allCats();
+  $('catList').innerHTML = cs.length ? '<table>' + cs.map(c => `<tr><td>${esc(c)}</td><td>${n(c)} item${n(c) === 1 ? '' : 's'}</td><td style="white-space:nowrap"><button data-cr="${esc(c)}">Rename</button> <button data-cd="${esc(c)}">Delete</button></td></tr>`).join('') + '</table>' : '<small>No categories yet.</small>';
+  $('catList').querySelectorAll('[data-cr]').forEach(b => b.onclick = async () => {
+    const old = b.dataset.cr, nn = (prompt('New name for "' + old + '"?', old) || '').trim(); if (!nn || nn === old) return;
+    let r = await db.from('items').update({ category: nn }).eq('category', old); if (r.error) return alert(r.error.message);
+    await db.from('categories').delete().eq('name', old); await db.from('categories').upsert({ name: nn }, { onConflict: 'name', ignoreDuplicates: true });
+    cat = 'All'; await loadItems(); loadCats(); });
+  $('catList').querySelectorAll('[data-cd]').forEach(b => b.onclick = async () => {
+    const c = b.dataset.cd; if (n(c)) return alert('"' + c + '" still has ' + n(c) + ' item(s). Move or delete those items first, or rename the category instead.');
+    if (!confirm('Delete category "' + c + '"?')) return; const r = await db.from('categories').delete().eq('name', c); if (r.error) return alert(r.error.message); loadCats(); });
+}
+$('cAdd').onclick = async () => { const nm = $('cNew').value.trim(); if (!nm) return;
+  if (allCats().some(c => c.toLowerCase() === nm.toLowerCase())) return alert('That category already exists.');
+  const r = await db.from('categories').upsert({ name: nm }, { onConflict: 'name', ignoreDuplicates: true }); if (r.error) return alert(r.error.message); $('cNew').value = ''; loadCats(); };
+const EXP_CATS = ['Ingredients / Raw Materials', 'Packaging', 'Supplies', 'Equipment', 'Equipment Maintenance', 'Rent / Space Rental', 'Utilities', 'Transportation / Delivery', 'Marketing / Advertising', 'Labor / Wages', 'Event / Bazaar Fees', 'Business Permits / Fees', 'Bank / Payment Fees', 'Other'];
+const PAY_METHODS = ['Cash', 'GCash', 'Bank transfer', 'Card', 'Other'];
+const opt = (list, sel, all) => (all ? `<option value="">${all}</option>` : '') + list.map(x => `<option${x === sel ? ' selected' : ''}>${esc(x)}</option>`).join('');
+let expEdit = null;
+const xRange = (a, b) => { $('xFrom').value = day(a); $('xTo').value = day(b); loadExp(); };
+$('xMonth').onclick = () => { const n = new Date(); xRange(new Date(n.getFullYear(), n.getMonth(), 1), n); };
+$('xLast').onclick = () => { const n = new Date(); xRange(new Date(n.getFullYear(), n.getMonth() - 1, 1), new Date(n.getFullYear(), n.getMonth(), 0)); };
+$('xYear').onclick = () => { const n = new Date(); xRange(new Date(n.getFullYear(), 0, 1), n); };
+$('xGo').onclick = loadExp; $('xCat').onchange = loadExp; $('xPay').onchange = loadExp; $('xAdd').onclick = () => xOpen({});
+$('tExp').onclick = () => { show('expenses');
+  if (!$('xFrom').value) { $('xCat').innerHTML = opt(EXP_CATS, '', 'All categories'); $('xPay').innerHTML = opt(PAY_METHODS, '', 'All payment methods'); $('xMonth').onclick(); } else loadExp(); };
+function xOpen(e) {
+  expEdit = e.id || null;
+  $('xForm').innerHTML = `<div class="card" style="border:1px solid #ddd;margin:8px 0"><h3 style="margin-top:0">${e.id ? 'Edit' : 'New'} expense</h3><div style="display:grid;gap:8px;max-width:420px">
+    <input id="e_date" type="date" value="${e.expense_date || day(new Date())}"><input id="e_name" placeholder="Expense name / description" value="${esc(e.name || '')}">
+    <select id="e_cat">${opt(EXP_CATS, e.category)}</select><input id="e_amt" type="number" min="0" step="any" placeholder="Amount (₱)" value="${e.amount ?? ''}">
+    <select id="e_pay">${opt(PAY_METHODS, e.payment_method || 'Cash')}</select>
+    <input id="e_vendor" list="e_vlist" placeholder="Supplier / vendor (optional)" value="${esc(e.vendor || '')}"><datalist id="e_vlist">${sups.map(s => `<option value="${esc(s.name)}">`).join('')}</datalist>
+    <input id="e_ref" placeholder="Receipt / reference no. (optional)" value="${esc(e.reference_no || '')}">
+    <textarea id="e_notes" rows="2" placeholder="Notes" style="padding:10px;border-radius:8px;border:1px solid #ccc;font:inherit">${esc(e.notes || '')}</textarea>
+    <div class="tabs"><button class="pri" id="e_save">Save</button><button id="e_cancel">Cancel</button></div></div></div>`;
+  $('e_cancel').onclick = () => $('xForm').innerHTML = '';
+  $('e_save').onclick = async () => {
+    const row = { expense_date: $('e_date').value, name: $('e_name').value.trim(), category: $('e_cat').value, amount: parseFloat($('e_amt').value), payment_method: $('e_pay').value,
+      vendor: $('e_vendor').value.trim() || null, reference_no: $('e_ref').value.trim() || null, notes: $('e_notes').value.trim() || null };
+    if (!row.expense_date || !row.name || !(row.amount > 0)) return alert('Please enter the date, a name, and an amount.');
+    const r = expEdit ? await db.from('expenses').update(row).eq('id', expEdit) : await db.from('expenses').insert(row);
+    if (r.error) return alert(r.error.message); $('xForm').innerHTML = ''; loadExp();
+  };
+  $('e_name').focus();
+}
+async function loadExp() {
+  let q = db.from('expenses').select('*').gte('expense_date', $('xFrom').value).lte('expense_date', $('xTo').value).order('expense_date', { ascending: false }).order('id', { ascending: false });
+  if ($('xCat').value) q = q.eq('category', $('xCat').value); if ($('xPay').value) q = q.eq('payment_method', $('xPay').value);
+  const r = await q; if (r.error) return alert(r.error.message); const rows = r.data;
+  $('xSum').innerHTML = `<span>Total expenses (${rows.length})</span><span>${P(rows.reduce((t, e) => t + +e.amount, 0))}</span>`;
+  $('xList').innerHTML = rows.length ? '<table><tr><th>Date</th><th>Expense</th><th>Category</th><th>Paid by</th><th>Amount</th><th></th></tr>' + rows.map(e =>
+    `<tr><td>${e.expense_date}</td><td>${esc(e.name)}<br><small>${esc([e.vendor, e.reference_no && '#' + e.reference_no, e.notes].filter(Boolean).join(' · '))}</small></td><td>${esc(e.category)}</td><td>${esc(e.payment_method)}</td><td>${P(e.amount)}</td>
+    <td style="white-space:nowrap"><button data-xe="${e.id}">Edit</button> <button data-xd="${e.id}">Delete</button></td></tr>`).join('') + '</table>' : 'No expenses in this range.';
+  $('xList').querySelectorAll('[data-xe]').forEach(b => b.onclick = () => xOpen(rows.find(e => e.id == b.dataset.xe)));
+  $('xList').querySelectorAll('[data-xd]').forEach(b => b.onclick = async () => { if (!confirm('Delete this expense?')) return;
+    const r = await db.from('expenses').delete().eq('id', b.dataset.xd); if (r.error) return alert(r.error.message); loadExp(); });
+}
+const closeMenu = () => { $('drawer').classList.remove('open'); $('scrim').hidden = true; };
+$('menu').onclick = () => { $('drawer').classList.add('open'); $('scrim').hidden = false; };
+$('scrim').onclick = closeMenu; $('drawer').querySelectorAll('button').forEach(b => b.addEventListener('click', closeMenu));
+</script></body></html>
