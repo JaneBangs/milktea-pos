@@ -68,6 +68,33 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
     <details style="margin:8px 0"><summary><b>Import Loyverse history</b> (daily Sales summary CSV files)</summary>
       <div class="tabs" style="margin-top:8px;align-items:center"><input id="hFiles" type="file" accept=".csv" multiple><label>Only import days before <input id="hCut" type="date"></label></div>
       <div id="hPrev" style="margin:8px 0"></div><button class="pri" id="hGo" hidden>Import</button></details>
+    <details style="margin:8px 0"><summary><b>Import Loyverse Receipts — Preview Only</b> (Receipt Log CSV)</summary>
+      <div class="tabs" style="margin-top:8px"><input id="rlFile" type="file" accept=".csv"></div>
+      <div id="rlPrev" style="margin:8px 0"></div></details>
+    <details style="margin:8px 0"><summary><b>Historical Receipt Entry</b> (type in one old receipt at a time)</summary>
+      <div style="background:#fff4d6;padding:8px;border-radius:8px;margin:8px 0">Saves to the historical receipts table only. It does not create live sales or change stock, costs, shifts or reports. Saved receipts <b>cannot be edited or deleted</b> from the app, so check before saving.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;max-width:900px">
+        <label>Receipt number *<br><input id="hrNo" placeholder="e.g. 1-1948" style="width:100%"></label>
+        <label>Sale date *<br><input id="hrDate" type="date" style="width:100%"></label>
+        <label>Sale time *<br><input id="hrTime" type="time" style="width:100%"></label>
+        <label>Receipt type<br><select id="hrType" style="width:100%"><option value="sale">Sale</option><option value="refund">Refund</option></select></label>
+        <label>Payment method<br><select id="hrPay" style="width:100%"><option value="">Not recorded</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option><option>Card</option><option>Other</option></select></label>
+        <label>Order type<br><input id="hrOrder" placeholder="e.g. Dine in" style="width:100%"></label>
+        <label>Employee<br><input id="hrEmp" style="width:100%"></label>
+        <label>POS name<br><input id="hrPos" placeholder="e.g. POS 1" style="width:100%"></label>
+      </div>
+      <p><small>Enter quantities and prices as <b>positive</b> numbers, exactly as printed on the receipt. For a refund receipt, choose Receipt type "Refund"; the amounts stay positive. Line totals are calculated as quantity × unit price.</small></p>
+      <div id="hrLines" style="overflow-x:auto"></div>
+      <button id="hrAdd" type="button">+ Add item</button>
+      <div class="row big" style="max-width:420px"><span>Sum of line totals</span><span id="hrSum">₱0.00</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,220px));gap:8px">
+        <label>Receipt total<br><input id="hrTotal" type="number" min="0" step="any" style="width:100%"></label>
+        <label>Amount tendered<br><input id="hrTendered" type="number" min="0" step="any" style="width:100%"></label>
+        <label>Change given<br><input id="hrChange" type="number" min="0" step="any" style="width:100%"></label>
+      </div>
+      <div id="hrCmp" style="margin-top:4px"></div>
+      <div id="hrMsg" style="margin:8px 0"></div>
+      <button class="pri" id="hrSave" type="button">Save historical receipt</button></details>
     <div class="stats" id="stats"></div><div id="cmp" style="color:#777;margin-bottom:8px"></div><div id="srcBox"></div>
     <div id="plBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
     <div id="healthBox" class="card" style="border:1px solid #ddd;margin:8px 0"></div>
@@ -872,6 +899,167 @@ $('hGo').onclick = async () => {
   for (let i = 0; i < hUse.length; i += 200) { const r = await db.from('history_days').upsert(hUse.slice(i, i + 200)); if (r.error) return alert(r.error.message); }
   alert('History imported.'); $('hFiles').value = ''; hRows = []; hUse = []; $('hGo').hidden = true; $('hPrev').textContent = ''; loadReport();
 };
+// ---- Loyverse Receipt Log: PREVIEW ONLY. Reads the chosen file; no database calls, nothing is saved. ----
+const RL_COLS = { 'sale date': 'date', 'sale time': 'time', 'receipt no.': 'receipt', 'employee': 'employee', 'pos': 'pos', 'order type': 'order_type', 'payment method': 'payment',
+  'item / flavor': 'item', 'sku': 'sku', 'category': 'category', 'size / variant': 'size', 'quantity': 'qty', 'unit price': 'unit_price', 'line total': 'line_total',
+  'receipt total': 'receipt_total', 'amount tendered': 'tendered', 'change': 'change', 'order ticket': 'ticket' };
+const RL_REQ = ['date', 'time', 'receipt', 'item', 'qty', 'unit_price', 'line_total'];
+const RL_NAMES = { date: 'Sale Date', time: 'Sale Time', receipt: 'Receipt No.', item: 'Item / Flavor', qty: 'Quantity', unit_price: 'Unit Price', line_total: 'Line Total',
+  receipt_total: 'Receipt Total', tendered: 'Amount Tendered', change: 'Change' };
+const RL_MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const rlHead = h => h.replace(/^﻿/, '').trim().toLowerCase().replace(/\s*\(php\)$/, '').replace(/\s+/g, ' ');
+// Same rules as parseCSV, but each record keeps the CSV row it starts on, and an unclosed quote is reported
+const rlCSV = t => { const out = []; let row = [], f = '', q = false, line = 1, start = 1;
+  const end = () => { row.push(f); f = ''; if (row.some(x => x.trim() !== '')) out.push({ n: start, cells: row }); row = []; };
+  for (let i = 0; i < t.length; i++) { const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else { if (c === '\n') line++; f += c; } }
+    else if (c === '"') q = true; else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; end(); start = ++line; }
+    else f += c; }
+  if (q) return { error: `Malformed CSV: the quote that starts on row ${start} is never closed.` };
+  end(); return { rows: out }; };
+const rlDate = s => { let y, m, d, x;
+  if ((x = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) { y = +x[1]; m = +x[2]; d = +x[3]; }
+  else if ((x = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) { m = +x[1]; d = +x[2]; y = +x[3]; }   // month first, like the daily importer
+  else if ((x = s.match(/^([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/))) { m = RL_MON.indexOf(x[1].toLowerCase()) + 1; d = +x[2]; y = +x[3]; }
+  else return null;
+  const dt = new Date(y, m - 1, d); return m > 0 && dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d ? day(dt) : null; };
+const rlTime = s => { const x = s.match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?\s*([AaPp][Mm])?$/); if (!x) return null; let h = +x[1];
+  if (x[4]) { if (h < 1 || h > 12) return null; h = h % 12 + (/p/i.test(x[4]) ? 12 : 0); } else if (h > 23) return null;
+  return String(h).padStart(2, '0') + ':' + x[2] + ':' + (x[3] || '00'); };
+const rlNum = s => { const v = s.replace(/₱/g, '').replace(/\s/g, ''); return /^-?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/.test(v) ? +v.replace(/,/g, '') : null; };
+function rlCheck(text) {
+  const res = { rows: 0, errors: [], warnings: [], lines: [], receipts: new Map(), days: new Map(), ready: false }, err = (n, m) => res.errors.push({ n, m }), warn = (n, m) => res.warnings.push({ n, m });
+  if (!text.trim()) { err(null, 'The file is empty.'); return res; }
+  const p = rlCSV(text); if (p.error) { err(null, p.error); return res; }
+  if (!p.rows.length) { err(null, 'No header row found. Please select a valid Receipt Log CSV.'); return res; }   // e.g. a file of only commas
+  const [head, ...rows] = p.rows, ix = {}; res.rows = rows.length;
+  head.cells.forEach((h, i) => { const k = RL_COLS[rlHead(h)]; if (k && !(k in ix)) ix[k] = i; });
+  const miss = RL_REQ.filter(k => !(k in ix)); if (miss.length) { err(head.n, 'Missing required column(s): ' + miss.map(k => RL_NAMES[k]).join(', ')); return res; }
+  if (!rows.length) { err(null, 'The file has headers but no data rows.'); return res; }
+  const today = day(new Date());
+  rows.forEach(({ n, cells }) => { const g = k => k in ix ? (cells[ix[k]] || '').trim() : '', bad = [];
+    const L = { n, receipt: g('receipt'), item: g('item'), sku: g('sku'), size: g('size'), payment: g('payment'), date: rlDate(g('date')), time: rlTime(g('time')) };
+    if (!g('date')) bad.push('Sale Date is blank'); else if (!L.date) bad.push(`Sale Date "${g('date')}" is not a valid date`); else if (L.date > today) bad.push(`Sale Date ${L.date} is in the future`);
+    if (!g('time')) bad.push('Sale Time is blank'); else if (!L.time) bad.push(`Sale Time "${g('time')}" is not a valid time`);
+    if (!L.receipt) bad.push('Receipt No. is blank'); if (!L.item) bad.push('Item / Flavor is blank');
+    for (const k of ['qty', 'unit_price', 'line_total', 'receipt_total', 'tendered', 'change']) { const s = g(k); L[k] = s ? rlNum(s) : null;
+      if (!s && RL_REQ.includes(k)) bad.push(RL_NAMES[k] + ' is blank'); else if (s && L[k] === null) bad.push(`${RL_NAMES[k]} "${s}" is not a number`); }
+    if (L.qty === 0) bad.push('Quantity is 0');
+    else if (L.qty !== null && L.unit_price !== null && L.line_total !== null && Math.abs(L.qty * L.unit_price - L.line_total) > 0.01)
+      bad.push(`Quantity × Unit Price is ${+(L.qty * L.unit_price).toFixed(2)} but Line Total is ${L.line_total}`);
+    if (bad.length) return bad.forEach(m => err(n, m));
+    let r = res.receipts.get(L.receipt); if (!r) res.receipts.set(L.receipt, r = { no: L.receipt, date: L.date, time: L.time, n, lines: [], sum: 0, totals: [] });
+    if (L.date !== r.date) return err(n, `Receipt ${L.receipt} has lines on different dates (${r.date} and ${L.date})`);
+    if (L.time !== r.time) warn(n, `Receipt ${L.receipt} has lines with different times (${r.time.slice(0, 5)} and ${L.time.slice(0, 5)})`);
+    r.lines.push(L); L.line_no = r.lines.length; r.sum += L.line_total; if (L.receipt_total !== null) r.totals.push(L.receipt_total);
+    res.lines.push(L);
+    const d = res.days.get(L.date) || res.days.set(L.date, { date: L.date, qty: 0, sales: 0, rc: new Set() }).get(L.date); d.qty += L.qty; d.sales += L.line_total; d.rc.add(L.receipt); });
+  // Receipt Total repeats on a receipt's lines: compare it ONCE per receipt with the sum of that receipt's line totals
+  for (const r of res.receipts.values()) { const t = [...new Set(r.totals)]; r.total = t.length === 1 ? t[0] : null;
+    if (t.length > 1) { r.status = 'error'; err(r.n, `Receipt ${r.no}: its lines show different Receipt Totals (${t.map(P).join(', ')})`); }
+    else if (!t.length) { r.status = 'no total'; warn(r.n, `Receipt ${r.no}: no Receipt Total to check against`); }
+    else if (Math.abs(t[0] - r.sum) > 0.01) { r.status = 'error'; err(r.n, `Receipt ${r.no}: Receipt Total is ${P(t[0])} but its lines add up to ${P(r.sum)}`); }
+    else r.status = 'ok'; }
+  res.ready = !res.errors.length && res.lines.length > 0; return res;
+}
+function rlDraw(name, res) {
+  const tbl = (h, rows) => '<div style="overflow-x:auto"><table><tr>' + h.map(x => `<th>${x}</th>`).join('') + '</tr>' + rows.join('') + '</table></div>';
+  const box = (bg, html) => `<div style="background:${bg};padding:8px;border-radius:8px;margin:6px 0">${html}</div>`;
+  const list = (a, label) => a.length ? `<b>${label}</b><br>` + a.slice(0, 100).map(e => (e.n ? `Row ${e.n}: ` : '') + esc(e.m)).join('<br>') + (a.length > 100 ? `<br>…and ${a.length - 100} more` : '') : '';
+  const days = [...res.days.values()].sort((a, b) => a.date < b.date ? -1 : 1), rc = [...res.receipts.values()];
+  $('rlPrev').innerHTML = box('#fff4d6', '<b>PREVIEW ONLY — Nothing has been saved to the database.</b>')
+    + `<div>File: <b>${esc(name)}</b> · ${res.rows} data rows parsed · ${res.lines.length} valid lines · ${res.receipts.size} receipts · <b>${res.errors.length} error${res.errors.length === 1 ? '' : 's'}</b> · ${res.warnings.length} warning${res.warnings.length === 1 ? '' : 's'}</div>`
+    + (res.ready ? box('#e6f4e6', `✓ No errors found: ${res.lines.length} lines in ${res.receipts.size} receipts passed every check. Importing is not available yet.`)
+      : box('#fde8e8', `✗ Not ready: ${res.errors.length} error${res.errors.length === 1 ? '' : 's'} must be fixed in the file before it can be imported.` + (res.lines.length ? ' Totals below include valid lines only.' : '')))
+    + (res.errors.length ? box('#fde8e8', list(res.errors, 'Errors')) : '') + (res.warnings.length ? box('#fff4d6', list(res.warnings, 'Warnings')) : '')
+    + (days.length ? '<h4>Daily summary</h4>' + tbl(['Date', 'Item quantity', 'Receipts', 'Line sales'], days.map(d => `<tr><td>${d.date}</td><td>${N(d.qty)}</td><td>${d.rc.size}</td><td>${P(d.sales)}</td></tr>`)
+        .concat(`<tr style="font-weight:700"><td>Total</td><td>${N(days.reduce((t, d) => t + d.qty, 0))}</td><td>${res.receipts.size}</td><td>${P(days.reduce((t, d) => t + d.sales, 0))}</td></tr>`)) : '')
+    + (rc.length ? '<h4>Receipt checks</h4>' + tbl(['Receipt', 'Date', 'Time', 'Lines', 'Lines total', 'Receipt Total', 'Check'], rc.slice(0, 200).map(r =>
+        `<tr><td>${esc(r.no)}</td><td>${r.date}</td><td>${r.time.slice(0, 5)}</td><td>${r.lines.length}</td><td>${P(r.sum)}</td><td>${r.total === null ? '—' : P(r.total)}</td><td>${r.status === 'ok' ? '✓' : r.status === 'error' ? '✗ mismatch' : 'not checked'}</td></tr>`)) : '')
+    + (res.lines.length ? `<h4>Sample lines (first ${Math.min(15, res.lines.length)} of ${res.lines.length})</h4>` + tbl(['Date', 'Time', 'Receipt', 'Item', 'SKU', 'Size', 'Qty', 'Unit price', 'Line total'], res.lines.slice(0, 15).map(l =>
+        `<tr><td>${l.date}</td><td>${l.time.slice(0, 5)}</td><td>${esc(l.receipt)}</td><td>${esc(l.item)}</td><td>${esc(l.sku)}</td><td>${esc(l.size)}</td><td>${N(l.qty)}</td><td>${P(l.unit_price)}</td><td>${P(l.line_total)}</td></tr>`)) : '');
+}
+$('rlFile').onchange = async () => { const f = $('rlFile').files[0]; if (!f) return $('rlPrev').innerHTML = ''; rlDraw(f.name, rlCheck(await f.text())); };
+// ---- Historical Receipt Entry: writes ONLY to history_sale_lines (source 'manual'). No live sales, stock, costs, shifts or reports. ----
+let hrRows = [], hrSaving = false;
+const hrBlank = () => ({ item: '', sku: '', category: '', size: '', qty: '', price: '' });
+const hrAmt = v => { v = String(v ?? '').trim(); if (v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : NaN; };   // null = blank, NaN = not a number
+const hrLineTotal = r => { const q = hrAmt(r.qty), p = hrAmt(r.price); return q === null || p === null || Number.isNaN(q) || Number.isNaN(p) ? null : Math.round(q * p * 100) / 100; };
+const hrUsed = rows => rows.map((r, i) => ({ r, n: i + 1 })).filter(x => Object.values(x.r).some(v => String(v).trim() !== ''));   // fully blank rows are ignored
+function hrSumUp() {
+  const s = hrRows.reduce((t, r) => t + (hrLineTotal(r) || 0), 0); $('hrSum').textContent = P(s);
+  hrRows.forEach((r, i) => { const c = $('hrLt' + i); if (c) { const v = hrLineTotal(r); c.textContent = v === null ? '—' : P(v); } });
+  const rt = hrAmt($('hrTotal').value);
+  $('hrCmp').innerHTML = rt === null || Number.isNaN(rt) ? '' : Math.abs(rt - s) <= 0.01 ? '<small style="color:#2a8a2a">✓ Receipt total matches the sum of the line totals.</small>'
+    : `<small style="color:#c33">Receipt total ${P(rt)} differs from the sum of the line totals by ${P(Math.abs(rt - s))}. Check the receipt (for example a discount). Nothing is changed automatically.</small>`;
+  return s;
+}
+function hrDraw() {
+  $('hrLines').innerHTML = '<table><tr><th>#</th><th>Item *</th><th>SKU</th><th>Category</th><th>Size</th><th>Qty *</th><th>Unit price *</th><th>Line total</th><th></th></tr>' + hrRows.map((r, i) => `<tr><td>${i + 1}</td>`
+    + ['item', 'sku', 'category', 'size'].map(k => `<td><input data-hr="${i}" data-k="${k}" value="${esc(r[k])}" style="width:${k === 'item' ? 170 : 100}px"></td>`).join('')
+    + ['qty', 'price'].map(k => `<td><input data-hr="${i}" data-k="${k}" type="number" min="0" step="any" value="${esc(r[k])}" style="width:90px"></td>`).join('')
+    + `<td id="hrLt${i}"></td><td><button type="button" data-hrx="${i}" aria-label="Remove item ${i + 1}">✕</button></td></tr>`).join('') + '</table>';
+  $('hrLines').querySelectorAll('[data-hr]').forEach(x => x.oninput = () => { hrRows[x.dataset.hr][x.dataset.k] = x.value; hrSumUp(); });
+  $('hrLines').querySelectorAll('[data-hrx]').forEach(x => x.onclick = () => { hrRows.splice(+x.dataset.hrx, 1); if (!hrRows.length) hrRows.push(hrBlank()); hrDraw(); });
+  hrSumUp();
+}
+function hrValidate(h, rows, today) {
+  const e = [], used = hrUsed(rows);
+  if (!h.no) e.push('Enter the original receipt number.');
+  if (!h.date) e.push('Enter the original sale date.'); else if (h.date > today) e.push('The sale date cannot be in the future.');
+  if (!/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(h.time || '')) e.push('Enter the original sale time.');
+  if (!['sale', 'refund'].includes(h.type)) e.push('Choose Sale or Refund.');
+  for (const [k, l] of [['total', 'Receipt total'], ['tendered', 'Amount tendered'], ['change', 'Change given']])
+    if (Number.isNaN(h[k]) || h[k] < 0) e.push(`${l} must be a number of 0 or more, or left blank.`);
+  if (!used.length) e.push('Add at least one item.');
+  used.forEach(({ r, n }) => { const q = hrAmt(r.qty), p = hrAmt(r.price), w = `Item ${n}`;
+    if (!r.item.trim()) e.push(`${w}: enter the item name.`);
+    if (q === null) e.push(`${w}: enter the quantity.`); else if (Number.isNaN(q)) e.push(`${w}: the quantity is not a number.`);
+    else if (q === 0) e.push(`${w}: the quantity cannot be 0.`); else if (q < 0) e.push(`${w}: enter the quantity as a positive number (choose Receipt type "Refund" for refunds).`);
+    if (p === null) e.push(`${w}: enter the unit price.`); else if (Number.isNaN(p)) e.push(`${w}: the unit price is not a number.`); else if (p < 0) e.push(`${w}: enter the unit price as a positive number.`); });
+  return { errors: e, used };
+}
+// Receipt-level values repeat on every line (schema rule); they are never added up across lines
+const hrBuild = (h, used) => used.map(({ r }, i) => ({ source: 'manual', receipt_no: h.no, line_no: i + 1, sale_date: h.date, sale_time: h.time.length === 5 ? h.time + ':00' : h.time,
+  receipt_type: h.type, payment_method: h.pay || null, order_type: h.order || null, employee: h.emp || null, pos_name: h.pos || null,
+  item_name: r.item.trim(), sku: r.sku.trim() || null, category: r.category.trim() || null, size: r.size.trim() || null,
+  qty: hrAmt(r.qty), unit_price: hrAmt(r.price), line_total: hrLineTotal(r), receipt_total: h.total, amount_tendered: h.tendered, change_given: h.change }));
+const hrWarnings = (h, sum) => { const w = [], tot = h.total ?? sum;
+  if (h.total !== null && Math.abs(h.total - sum) > 0.01) w.push(`Receipt total ${P(h.total)} differs from the sum of the line totals ${P(sum)}.`);
+  if (h.tendered !== null && h.tendered + 0.005 < tot) w.push(`Amount tendered ${P(h.tendered)} is less than the total ${P(tot)}.`);
+  if (h.tendered !== null && h.change !== null && Math.abs(h.tendered - tot - h.change) > 0.01) w.push(`Change given ${P(h.change)} is not tendered − total (${P(h.tendered - tot)}).`);
+  return w; };
+function hrReset() {
+  ['hrNo', 'hrDate', 'hrTime', 'hrOrder', 'hrEmp', 'hrPos', 'hrTotal', 'hrTendered', 'hrChange'].forEach(id => $(id).value = '');
+  $('hrType').value = 'sale'; $('hrPay').value = ''; hrRows = [hrBlank()]; hrDraw();
+}
+$('hrAdd').onclick = () => { hrRows.push(hrBlank()); hrDraw(); };
+$('hrTotal').oninput = hrSumUp;
+$('hrSave').onclick = async () => {
+  if (hrSaving) return;
+  const box = (bg, t) => `<div style="background:${bg};padding:8px;border-radius:8px">${t}</div>`, msg = t => $('hrMsg').innerHTML = t, bad = t => msg(box('#fde8e8', t));
+  const h = { no: $('hrNo').value.trim(), date: $('hrDate').value, time: $('hrTime').value, type: $('hrType').value, pay: $('hrPay').value,
+    order: $('hrOrder').value.trim(), emp: $('hrEmp').value.trim(), pos: $('hrPos').value.trim(),
+    total: hrAmt($('hrTotal').value), tendered: hrAmt($('hrTendered').value), change: hrAmt($('hrChange').value) };
+  const v = hrValidate(h, hrRows, day(new Date()));
+  if (v.errors.length) return bad('<b>Not saved. Please fix:</b><br>' + v.errors.map(esc).join('<br>'));
+  const lines = hrBuild(h, v.used), sum = lines.reduce((t, l) => t + l.line_total, 0), warn = hrWarnings(h, sum);
+  hrSaving = true; $('hrSave').disabled = true; msg('Checking…');
+  try {
+    let r = await db.from('history_sale_lines').select('id').eq('source', 'manual').eq('receipt_no', h.no).limit(1);
+    if (r.error) return bad('Could not check for an existing receipt, so nothing was saved: ' + esc(r.error.message));
+    if (r.data.length) return bad(`<b>Duplicate:</b> receipt ${esc(h.no)} was already entered. Nothing was saved, and the existing record was not changed.`);
+    if (!confirm(`Save historical receipt ${h.no} (${h.type === 'refund' ? 'Refund' : 'Sale'}) dated ${h.date} ${h.time.slice(0, 5)}?\n${lines.length} item line${lines.length > 1 ? 's' : ''}, sum of line totals ${P(sum)}.`
+      + (warn.length ? '\n\nPlease check:\n- ' + warn.join('\n- ') : '') + '\n\nSaved receipts cannot be edited or deleted from the app.')) return msg('Not saved.');
+    msg('Saving…');
+    r = await db.from('history_sale_lines').insert(lines);   // one request: all lines are saved, or none
+    if (r.error) return bad(r.error.code === '23505' ? `<b>Duplicate:</b> receipt ${esc(h.no)} already exists. Nothing was saved.` : 'Save failed; nothing was saved: ' + esc(r.error.message));
+    hrReset(); msg(box('#e6f4e6', `✓ Historical receipt ${esc(h.no)} saved (${lines.length} line${lines.length > 1 ? 's' : ''}, ${P(sum)}). It is stored separately and is not shown in the current reports.`));
+  } catch (e) { bad('Save failed; nothing was saved: ' + esc(e.message || e)); }
+  finally { hrSaving = false; $('hrSave').disabled = false; }
+};
+hrRows = [hrBlank()]; hrDraw();
 let catRows = [];
 const allCats = () => [...new Set([...allItems.map(x => x.category), ...catRows])].sort((a, b) => a.localeCompare(b));
 async function loadCats() { const r = await db.from('categories').select('name'); catRows = r.error ? [] : r.data.map(x => x.name); renderItems(); }
